@@ -983,6 +983,27 @@ func service_transport_during_exclusive_run(run_state: Dictionary) -> ServiceSta
 		return ServiceStatus.BLOCKED
 	if pause_processing:
 		return ServiceStatus.PAUSED
+	return _service_transport(run_state)
+
+
+## The same servicing for an in-editor export (project_handler.export_project).
+## The export holds pause_processing on purpose: its progress dialogs pump the
+## main loop, and _process must not dispatch from inside it. Servicing only
+## answers keepalive pings and rejects commands, so it runs despite the pause.
+func service_transport_during_export(run_state: Dictionary) -> ServiceStatus:
+	if connect_blocked:
+		return ServiceStatus.BLOCKED
+	_exclusive_run_kind = "export"
+	var status := _service_transport(run_state)
+	_exclusive_run_kind = "test"
+	return status
+
+
+## Which exclusive run is servicing the transport, for the reject message.
+var _exclusive_run_kind := "test"
+
+
+func _service_transport(run_state: Dictionary) -> ServiceStatus:
 	while true:
 		_peer.poll()
 		if _peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
@@ -994,8 +1015,8 @@ func service_transport_during_exclusive_run(run_state: Dictionary) -> ServiceSta
 			if _service_note_packet(run_state):
 				if log_buffer:
 					log_buffer.log(
-						"[busy] packet flood during test run (%d > cap %d) — closing connection"
-						% [int(run_state.get("packets_serviced", 0)), EXCLUSIVE_RUN_PACKET_CAP]
+						"[busy] packet flood during %s run (%d > cap %d) — closing connection"
+						% [_exclusive_run_kind, int(run_state.get("packets_serviced", 0)), EXCLUSIVE_RUN_PACKET_CAP]
 					)
 				_peer.close(CLOSE_CODE_EXCLUSIVE_RUN_FLOOD, "command flood during test run")
 				return ServiceStatus.DISCONNECTED
@@ -1059,8 +1080,8 @@ func _service_reject_command(parsed: Dictionary, packets_serviced: int) -> void:
 	):
 		## Ring-buffer only (echo=false): a flood must not bury the console.
 		log_buffer.log(
-			"[busy] rejected '%s' during test run (packet %d)"
-			% [parsed.get("command", ""), packets_serviced],
+			"[busy] rejected '%s' during %s run (packet %d)"
+			% [parsed.get("command", ""), _exclusive_run_kind, packets_serviced],
 			false,
 		)
 
@@ -1078,6 +1099,12 @@ func _build_service_reject(parsed: Dictionary) -> Dictionary:
 		) % command,
 		true,
 	)
+	if _exclusive_run_kind == "export":
+		response = ErrorCodes.make_not_ready(
+			ErrorCodes.SUB_EDITOR_EXPORTING,
+			"An export is in progress on this editor — '%s' was not executed. Retry when it finishes." % command,
+			true,
+		)
 	response["request_id"] = parsed.get("request_id", "")
 	response["readiness"] = get_readiness()
 	_stamp_error_watermark(response)

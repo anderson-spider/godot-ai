@@ -126,6 +126,8 @@ const SUB_EDITOR_UNAVAILABLE := "EDITOR_UNAVAILABLE"
 ## rejected (not buffered) so it can't replay stale after its server-side
 ## future expires. See connection.gd::service_transport_during_exclusive_run.
 const SUB_EDITOR_TEST_RUNNING := "EDITOR_TEST_RUNNING"
+## The same rejection while project_manage(op="export") holds the main thread.
+const SUB_EDITOR_EXPORTING := "EDITOR_EXPORTING"
 
 ## Terminal code for a test run that hit its between-test abort ceiling
 ## before finishing. error.data carries the partial summary; full partial

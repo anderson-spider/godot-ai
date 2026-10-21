@@ -312,6 +312,26 @@ func test_connection_service_reject_shape() -> void:
 	assert_true("node_create" in str(response["error"]["message"]), "message names the command")
 
 
+func test_connection_export_servicing_runs_despite_the_pause_and_names_the_export() -> void:
+	var conn := McpConnection.new()
+	track(conn)
+	conn.pause_processing = true
+	assert_eq(
+		conn.service_transport_during_export({}),
+		McpConnection.ServiceStatus.DISCONNECTED,
+		"the export's own pause does not stop servicing; a fresh peer is just not OPEN"
+	)
+	conn._exclusive_run_kind = "export"
+	var response: Dictionary = conn._build_service_reject({"request_id": "req-e", "command": "node_create"})
+	conn._exclusive_run_kind = "test"
+	conn.pause_processing = false
+	assert_eq(response["error"]["data"]["sub_code"], ErrorCodes.SUB_EDITOR_EXPORTING)
+	assert_true(bool(response["error"]["data"]["retryable"]))
+	assert_contains(str(response["error"]["message"]), "export")
+	assert_eq(conn._build_service_reject({"command": "x"})["error"]["data"]["sub_code"], ErrorCodes.SUB_EDITOR_TEST_RUNNING,
+		"the kind is reset after export servicing")
+
+
 func test_connection_service_status_without_socket() -> void:
 	var conn := McpConnection.new()
 	track(conn)

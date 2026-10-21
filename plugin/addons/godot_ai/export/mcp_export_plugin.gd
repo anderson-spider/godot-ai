@@ -40,6 +40,10 @@ var _stripped := false
 ## every export plugin's _should_update_export_options once per frame, so they
 ## are collected there.
 static var platforms: Dictionary = {}
+## Set by project_handler.export_project for the length of an in-editor
+## export and called once per exported file, so the blocked editor keeps its
+## connection alive (see McpConnection.service_transport_during_export).
+static var on_export_file: Callable = Callable()
 
 
 func _get_name() -> String:
@@ -50,6 +54,11 @@ func _should_update_export_options(platform: EditorExportPlatform) -> bool:
 	if platform != null:
 		platforms[platform.get_os_name()] = platform
 	return false
+
+
+func _export_file(_path: String, _type: String, _features: PackedStringArray) -> void:
+	if on_export_file.is_valid():
+		on_export_file.call()
 
 
 func _export_begin(_features: PackedStringArray, _is_debug: bool, _path: String, _flags: int) -> void:

@@ -236,15 +236,16 @@ func run_project(params: Dictionary) -> Dictionary:
 	# stop-not-running case in telemetry). Surface state via was_already_running
 	# so a caller wanting a *different* scene can detect and stop+restart.
 	if EditorInterface.is_playing_scene():
-		return _run_project_current_liveness_response(
-			_run_project_base_data(
-				mode,
-				str(params.get("scene", "")),
-				autosave,
-				true,
-				"Project was already running; no action taken"
-			)
+		var running_data := _run_project_base_data(
+			mode,
+			str(params.get("scene", "")),
+			autosave,
+			true,
+			"Project was already running; no action taken"
 		)
+		if params.get("window_size") != null:
+			running_data["window"] = {"ignored": "The game is already running; stop it and run again to apply window_size."}
+		return _run_project_current_liveness_response(running_data)
 
 	var validation_error: Variant = null
 	if mode == "custom":
@@ -267,6 +268,9 @@ func run_project(params: Dictionary) -> Dictionary:
 		if parsed_size.has("error"):
 			return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "window_size: %s" % parsed_size.error)
 		window_size = parsed_size.size
+		var refusal := _run_window_size_refusal()
+		if not refusal.is_empty():
+			return ErrorCodes.make(ErrorCodes.RESOURCE_NOT_FOUND if refusal.begins_with("Cannot find") else ErrorCodes.VALUE_OUT_OF_RANGE, refusal)
 
 	# play_*_scene internally triggers try_autosave() → _save_scene_with_preview()
 	# which renders a preview thumbnail and calls frame processing. If our
@@ -375,6 +379,15 @@ static func run_args_with_resolution(args: String, size: Vector2i) -> String:
 	return (flag + " " + args).strip_edges()
 
 
+## "" when window_size can be honoured on this editor, or why not.
+func _run_window_size_refusal() -> String:
+	if _main_run_args_edit() == null:
+		return "Cannot find the Run Instances dialog's Main Run Args field, so window_size cannot be applied"
+	if bool(EditorInterface.get_editor_settings().get_project_metadata("debug_options", "multiple_instances_enabled", false)):
+		return "window_size needs Debug > Customize Run Instances > Enable Multiple Instances off; an instance can override the main run arguments"
+	return ""
+
+
 ## Point the next play at a separate window of `size`, for that run only.
 ## The editor builds the run's arguments from the Run Instances dialog's
 ## "Main Run Args" field (refreshed from editor/run/main_run_args only on a
@@ -474,9 +487,35 @@ func export_presets(_params: Dictionary) -> Dictionary:
 	return {"data": data}
 
 
-## "" when `path` may receive an export: outside the plugin and .godot, with a
-## file name. `path` is absolute or res:// (a bare relative path is read from
-## the project folder, as export_presets.cfg does).
+const EXPORT_KEEPALIVE_INTERVAL_MSEC := 1000
+
+
+## A callable for each exported file that services the connection at most
+## once per EXPORT_KEEPALIVE_INTERVAL_MSEC, so the server's keepalive pings
+## get answered during a long export instead of closing the session.
+func _export_keepalive(run_state: Dictionary, clock: Dictionary) -> Callable:
+	var connection = _connection
+	return func() -> void:
+		var now := Time.get_ticks_msec()
+		if connection == null or now - int(clock.last) < EXPORT_KEEPALIVE_INTERVAL_MSEC:
+			return
+		clock.last = now
+		connection.service_transport_during_export(run_state)
+
+
+## Build outputs an export may write inside the project folder. Anything
+## else there (a scene, a script, project.godot) would be overwritten by the
+## build or by the .pck written beside it.
+const EXPORT_BUILD_EXTENSIONS: Array[String] = [
+	"zip", "dmg", "app", "pkg", "exe", "x86_64", "x86_32", "arm64", "arm32", "rv64",
+	"ppc64", "sh", "html", "apk", "aab", "ipa", "pck",
+]
+
+
+## "" when `path` may receive an export: a file name with no "..", outside
+## the plugin and .godot, and with a build extension when it lands inside the
+## project folder. `path` is absolute or res:// (a bare relative path is read
+## from the project folder, as export_presets.cfg does).
 static func export_path_error(path: String) -> String:
 	if path.is_empty():
 		return "Missing path, and the preset has no export_path"
@@ -489,6 +528,9 @@ static func export_path_error(path: String) -> String:
 		var root := ProjectSettings.globalize_path(blocked)
 		if absolute == root or absolute.begins_with(root + "/"):
 			return "path must not be under %s (got %s)" % [blocked, path]
+	var project := ProjectSettings.globalize_path("res://").trim_suffix("/")
+	if absolute.begins_with(project + "/") and not absolute.get_extension().to_lower() in EXPORT_BUILD_EXTENSIONS:
+		return "Inside the project folder an export path needs a build extension (%s); got %s" % [", ".join(EXPORT_BUILD_EXTENSIONS), path]
 	return ""
 
 
@@ -538,8 +580,10 @@ func export_project(params: Dictionary) -> Dictionary:
 	if _connection:
 		_connection.pause_processing = true
 	var started := Time.get_ticks_msec()
+	ExportPlugin.on_export_file = _export_keepalive({}, {"last": started})
 	platform.clear_messages()
 	var err := platform.export_project(preset, debug, absolute, 0)
+	ExportPlugin.on_export_file = Callable()
 	var duration := Time.get_ticks_msec() - started
 	if _connection:
 		_connection.pause_processing = false
@@ -551,6 +595,9 @@ func export_project(params: Dictionary) -> Dictionary:
 			"category": platform.get_message_category(i),
 			"text": platform.get_message_text(i),
 		})
+	## The Export dialog also reports an export with error messages as failed.
+	if err == OK and platform.get_worst_message_type() >= EditorExportPlatform.EXPORT_MESSAGE_ERROR:
+		err = FAILED
 	if err != OK:
 		var details := "; ".join(messages.filter(func(m: Dictionary) -> bool: return m.type == "error").map(func(m: Dictionary) -> String: return "%s: %s" % [m.category, m.text]))
 		return ErrorCodes.make(ErrorCodes.INTERNAL_ERROR, "Export of '%s' failed (%s)%s" % [preset_name, error_string(err), (": " + details) if not details.is_empty() else ""])

@@ -112,6 +112,8 @@ class EditorNotReadySubCode(StrEnum):
     # command arrived while a synchronous test run held the editor main
     # thread and was rejected (retryable) instead of buffered.
     EDITOR_TEST_RUNNING = "EDITOR_TEST_RUNNING"
+    # The same rejection while an in-editor export holds the main thread.
+    EDITOR_EXPORTING = "EDITOR_EXPORTING"
 
 
 class EditorTransportSubCode(StrEnum):

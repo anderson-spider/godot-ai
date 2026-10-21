@@ -296,23 +296,30 @@ func test_search_filesystem_no_results() -> void:
 func test_export_platforms_are_captured_from_the_editor() -> void:
 	var ExportPlugin := preload("res://addons/godot_ai/export/mcp_export_plugin.gd")
 	assert_false(ExportPlugin.platforms.is_empty(), "EditorExport hands its platforms to the export plugin every frame")
+	assert_true(ExportPlugin.platforms.has("Linux") or ExportPlugin.platforms.has("macOS") or ExportPlugin.platforms.has("Windows"),
+		"a desktop platform is among them (got %s)" % str(ExportPlugin.platforms.keys()))
 	var listed := _handler.export_presets({})
 	assert_has_key(listed, "data")
-	assert_eq(listed.data.count, listed.data.presets.size())
+	for preset: Dictionary in listed.data.presets:
+		assert_true(preset.has("name") and preset.has("platform"), str(preset))
 
 
 func test_export_refuses_an_unknown_preset_and_bad_paths() -> void:
 	assert_is_error(_handler.export_project({}), ErrorCodes.MISSING_REQUIRED_PARAM)
 	assert_is_error(_handler.export_project({"preset": "_mcp_no_such_preset"}), ErrorCodes.RESOURCE_NOT_FOUND)
 	assert_eq(ProjectHandler.export_path_error("builds/game.zip"), "")
-	assert_eq(ProjectHandler.export_path_error("/tmp/mcp/game.zip"), "")
+	assert_eq(ProjectHandler.export_path_error("res://builds/linux/game.x86_64"), "")
+	assert_eq(ProjectHandler.export_path_error("/tmp/mcp/game.anything"), "", "outside the project any file name goes")
 	assert_contains(ProjectHandler.export_path_error(""), "Missing path")
 	assert_contains(ProjectHandler.export_path_error("builds/"), "file")
 	assert_contains(ProjectHandler.export_path_error("../outside/game.zip"), "..")
+	assert_contains(ProjectHandler.export_path_error("..\\outside\\game.zip"), "..")
 	assert_contains(ProjectHandler.export_path_error("res://addons/godot_ai/game.zip"), "addons/godot_ai")
 	assert_contains(ProjectHandler.export_path_error("addons/godot_ai/game.zip"), "addons/godot_ai")
 	assert_contains(ProjectHandler.export_path_error(".godot/game.zip"), ".godot")
-	assert_eq(ProjectHandler.export_absolute_path("builds/game.zip"), ProjectSettings.globalize_path("res://").path_join("builds/game.zip"))
+	for project_file in ["res://main.tscn", "project.godot", "res://tests/test_project.gd"]:
+		assert_contains(ProjectHandler.export_path_error(project_file), "build extension", "%s is refused" % project_file)
+	assert_true(ProjectHandler.export_absolute_path("builds/game.zip").ends_with("/test_project/builds/game.zip"))
 	assert_eq(ProjectHandler.export_absolute_path("/tmp/game.zip"), "/tmp/game.zip")
 
 
@@ -340,17 +347,28 @@ func test_run_project_rejects_a_bad_window_size_before_playing() -> void:
 	if EditorInterface.is_playing_scene():
 		skip("A game is already running")
 		return
-	var prior_args: Variant = ProjectSettings.get_setting("editor/run/main_run_args", "")
 	var result := _handler.run_project({"window_size": [10, 10]})
 	assert_is_error(result, ErrorCodes.VALUE_OUT_OF_RANGE)
 	assert_false(EditorInterface.is_playing_scene(), "nothing was launched")
-	assert_eq(ProjectSettings.get_setting("editor/run/main_run_args", ""), prior_args, "run arguments untouched")
 
 
-## NOTE: test_run_project_rejects_when_already_playing removed — it was an
-## empty test (just `pass`) that requires the project to actually be running,
-## which can't happen from within the test runner. Covered by Python tests.
-
+func test_run_window_size_edits_and_restores_the_run_args_and_embedding() -> void:
+	var args_edit := _handler._main_run_args_edit()
+	if args_edit == null:
+		skip("This editor has no Run Instances dialog")
+		return
+	var menu := _handler._game_view_options_menu()
+	var prior_text := args_edit.text
+	var embed_index := menu.get_item_index(ProjectHandler.GAME_VIEW_EMBED_ON_PLAY_ID) if menu != null else -1
+	var prior_embed := menu.is_item_checked(embed_index) if menu != null else false
+	var state := _handler._begin_run_window_size(Vector2i(640, 360))
+	assert_contains(args_edit.text, "--resolution 640x360", "the launch reads the field's text")
+	if menu != null:
+		assert_false(menu.is_item_checked(embed_index), "embedding is off for the launch")
+	_handler._end_run_window_size(state)
+	assert_eq(args_edit.text, prior_text, "the field gets its text back")
+	if menu != null:
+		assert_eq(menu.is_item_checked(embed_index), prior_embed, "embedding is back as it was")
 
 func test_run_project_invalid_mode() -> void:
 	var result := _handler.run_project({"mode": "invalid_mode"})
@@ -366,6 +384,23 @@ func test_run_project_invalid_mode_restores_connection_pause() -> void:
 
 	assert_is_error(result, ErrorCodes.VALUE_OUT_OF_RANGE)
 	assert_false(conn.pause_processing, "validation errors must not leave processing paused")
+	conn.free()
+
+
+func test_export_keepalive_services_the_connection_at_most_once_a_second() -> void:
+	var conn := McpConnection.new()
+	var handler := ProjectHandler.new(conn)
+	var run_state := {}
+	var clock := {"last": Time.get_ticks_msec()}
+	var keepalive := handler._export_keepalive(run_state, clock)
+	var before := int(clock.last)
+	keepalive.call()
+	assert_eq(int(clock.last), before, "inside the interval nothing is serviced")
+	clock.last = before - ProjectHandler.EXPORT_KEEPALIVE_INTERVAL_MSEC - 1
+	conn.pause_processing = true
+	keepalive.call()
+	assert_true(int(clock.last) >= before, "past the interval the connection is serviced and the clock moves")
+	conn.pause_processing = false
 	conn.free()
 
 
