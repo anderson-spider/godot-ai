@@ -54,6 +54,9 @@ var _replay_frame := 0
 var _replay_total_frames := 0
 var _replay_path := ""
 var _replay_finished := false
+## Press events emitted by the replay and not yet released, by input key.
+var _replay_held: Dictionary = {}
+var _replay_released_at_end := 0
 
 
 ## "" when `path` may hold a recording: a .json under user://, or under res://
@@ -63,7 +66,7 @@ static func path_error(path: String) -> String:
 		return "path must start with user:// or res:// (got %s)" % path
 	if not path.to_lower().ends_with(".json"):
 		return "path must end in .json (got %s)" % path
-	if ".." in path.split("/"):
+	if ".." in path.replace("\\", "/").split("/"):
 		return "path must not contain .. (got %s)" % path
 	for blocked in ["res://addons/godot_ai/", "res://.godot/"]:
 		if path.begins_with(blocked):
@@ -110,18 +113,26 @@ static func event_from_json(data: Variant) -> Dictionary:
 		var value: Variant = props[name]
 		match types[name]:
 			TYPE_BOOL:
-				event.set(name, bool(value))
-			TYPE_INT:
-				event.set(name, int(value))
-			TYPE_FLOAT:
-				event.set(name, float(value))
+				if not value is bool:
+					return {"error": "%s.%s must be true or false" % [type, name]}
+				event.set(name, value)
+			TYPE_INT, TYPE_FLOAT:
+				if not _is_number(value):
+					return {"error": "%s.%s must be a number" % [type, name]}
+				event.set(name, int(value) if types[name] == TYPE_INT else float(value))
 			TYPE_STRING, TYPE_STRING_NAME:
-				event.set(name, str(value))
+				if not value is String:
+					return {"error": "%s.%s must be a string" % [type, name]}
+				event.set(name, value)
 			TYPE_VECTOR2:
-				if not (value is Array and (value as Array).size() == 2):
+				if not (value is Array and (value as Array).size() == 2 and _is_number(value[0]) and _is_number(value[1])):
 					return {"error": "%s.%s must be [x, y]" % [type, name]}
 				event.set(name, Vector2(float(value[0]), float(value[1])))
 	return {"event": event}
+
+
+static func _is_number(value: Variant) -> bool:
+	return typeof(value) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(value))
 
 
 func start_recording(path: String, window_size: Vector2i) -> Dictionary:
@@ -211,6 +222,8 @@ func start_replay(path: String, window_size: Vector2i) -> Dictionary:
 	_replay_frame = 0
 	_replay_path = path
 	_replay_finished = false
+	_replay_held.clear()
+	_replay_released_at_end = 0
 	state = State.REPLAYING
 	return {"replaying": true, "path": path, "events": _replay_events.size(), "frames": _replay_total_frames}
 
@@ -224,11 +237,13 @@ static func load_document(text: String) -> Dictionary:
 	var data: Dictionary = json.data
 	if data.get("format") != FORMAT:
 		return {"error": "not a %s file" % FORMAT}
-	if int(data.get("version", 0)) != VERSION:
+	if not _is_number(data.get("version")) or int(data.version) != VERSION:
 		return {"error": "unsupported version %s" % str(data.get("version"))}
 	var size: Variant = data.get("window_size")
-	if not (size is Array and (size as Array).size() == 2):
+	if not (size is Array and (size as Array).size() == 2 and _is_number(size[0]) and _is_number(size[1])):
 		return {"error": "window_size must be [width, height]"}
+	if data.get("frames") != null and not _is_number(data.frames):
+		return {"error": "frames must be a number"}
 	var raw: Variant = data.get("events")
 	if not raw is Array:
 		return {"error": "events must be a list"}
@@ -241,7 +256,8 @@ static func load_document(text: String) -> Dictionary:
 		var built := event_from_json(entry)
 		if built.has("error"):
 			return {"error": "event %d: %s" % [events.size(), built.error]}
-		var frame := int((entry as Dictionary).get("frame", -1))
+		var raw_frame: Variant = (entry as Dictionary).get("frame")
+		var frame := int(raw_frame) if _is_number(raw_frame) else -1
 		if frame < last_frame:
 			return {"error": "event %d: frames must be non-negative and in order" % events.size()}
 		last_frame = frame
@@ -261,15 +277,50 @@ func tick() -> void:
 		return
 	while _replay_next < _replay_events.size() and _replay_frames[_replay_next] <= _replay_frame:
 		var event := _replay_events[_replay_next]
-		if emit_event.is_valid():
-			emit_event.call(event)
-		else:
-			Input.parse_input_event(event)
+		_track_held(event)
+		_emit(event)
 		_replay_next += 1
 	_replay_frame += 1
 	if _replay_next >= _replay_events.size() and _replay_frame > _replay_total_frames:
+		## A recording stopped mid-press would leave that input stuck down.
+		for held: InputEvent in _replay_held.values():
+			var release: InputEvent = held.duplicate()
+			release.set("pressed", false)
+			_emit(release)
+		_replay_released_at_end = _replay_held.size()
+		_replay_held.clear()
 		state = State.IDLE
 		_replay_finished = true
+
+
+func _emit(event: InputEvent) -> void:
+	if emit_event.is_valid():
+		emit_event.call(event)
+	else:
+		Input.parse_input_event(event)
+
+
+## Key of a pressable event (key, mouse or joypad button, action), or "".
+static func _held_key(event: InputEvent) -> String:
+	if event is InputEventKey:
+		return "key:%d:%d" % [(event as InputEventKey).keycode, (event as InputEventKey).physical_keycode]
+	if event is InputEventMouseButton:
+		return "mouse:%d" % (event as InputEventMouseButton).button_index
+	if event is InputEventJoypadButton:
+		return "joy:%d:%d" % [event.device, (event as InputEventJoypadButton).button_index]
+	if event is InputEventAction:
+		return "action:%s" % (event as InputEventAction).action
+	return ""
+
+
+func _track_held(event: InputEvent) -> void:
+	var key := _held_key(event)
+	if key.is_empty():
+		return
+	if event.is_pressed():
+		_replay_held[key] = event
+	else:
+		_replay_held.erase(key)
 
 
 func replay_status() -> Dictionary:
@@ -281,6 +332,7 @@ func replay_status() -> Dictionary:
 		"frame": _replay_frame,
 		"frames_total": _replay_total_frames,
 		"finished": _replay_finished,
+		"released_at_end": _replay_released_at_end,
 		"recording_path": _path if state == State.RECORDING else "",
 		"recorded_events": _events.size() if state == State.RECORDING else 0,
 	}

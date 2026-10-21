@@ -51,6 +51,11 @@ func test_unknown_event_types_are_refused() -> void:
 	assert_contains(InputRecorder.event_from_json({"type": "Node", "props": {}}).error, "not a recordable")
 	assert_contains(InputRecorder.event_from_json({"type": "InputEventMouseMotion", "props": {"position": "x"}}).error, "position")
 	assert_contains(InputRecorder.event_from_json("nope").error, "type")
+	## Hand-edited or corrupt values are refused instead of erroring at runtime.
+	for bad: Dictionary in [{"pressed": "yes"}, {"keycode": null}, {"keycode": [1]}, {"unicode": "x"}]:
+		assert_has_key(InputRecorder.event_from_json({"type": "InputEventKey", "props": bad}), "error", str(bad))
+	assert_has_key(InputRecorder.event_from_json({"type": "InputEventAction", "props": {"action": 3}}), "error")
+	assert_has_key(InputRecorder.event_from_json({"type": "InputEventMouseMotion", "props": {"position": [1, null]}}), "error")
 
 
 func test_path_rules() -> void:
@@ -59,6 +64,7 @@ func test_path_rules() -> void:
 	assert_contains(InputRecorder.path_error("/tmp/a.json"), "user://")
 	assert_contains(InputRecorder.path_error("user://a.txt"), ".json")
 	assert_contains(InputRecorder.path_error("user://../a.json"), "..")
+	assert_contains(InputRecorder.path_error("user://..\\a.json"), "..")
 	assert_contains(InputRecorder.path_error("res://addons/godot_ai/a.json"), "addons/godot_ai")
 	assert_contains(InputRecorder.path_error("res://.godot/a.json"), ".godot")
 	assert_true(InputRecorder.default_path().begins_with(InputRecorder.DEFAULT_DIR))
@@ -123,6 +129,44 @@ func test_bad_recordings_are_refused() -> void:
 	future["version"] = 99
 	future["events"] = []
 	assert_contains(InputRecorder.load_document(JSON.stringify(future)).error, "version")
+	for broken: Dictionary in [{"version": null}, {"window_size": [10, null]}, {"frames": "many"}]:
+		var doc := base.duplicate()
+		doc["events"] = []
+		doc.merge(broken, true)
+		assert_has_key(InputRecorder.load_document(JSON.stringify(doc)), "error", str(broken))
+	var no_frame := base.duplicate()
+	no_frame["events"] = [{"type": "InputEventAction", "props": {"action": "a"}, "frame": null}]
+	assert_has_key(InputRecorder.load_document(JSON.stringify(no_frame)), "error")
 	var recorder := InputRecorder.new()
 	assert_contains(recorder.start_replay("user://mcp_input_recorder_test/missing.json", Vector2i(10, 10)).error, "not found")
 	assert_contains(recorder.stop_recording().error, "Not recording")
+
+
+func test_replay_releases_what_the_recording_left_pressed() -> void:
+	var recorder := InputRecorder.new()
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	mouse.pressed = true
+	var document := {
+		"format": InputRecorder.FORMAT, "version": InputRecorder.VERSION, "window_size": [10, 10], "frames": 0,
+		"events": [
+			InputRecorder.event_to_json(_key(KEY_A, true)).merged({"frame": 0}),
+			InputRecorder.event_to_json(_key(KEY_B, true)).merged({"frame": 0}),
+			InputRecorder.event_to_json(_key(KEY_B, false)).merged({"frame": 0}),
+			InputRecorder.event_to_json(mouse).merged({"frame": 0}),
+		],
+	}
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(TMP_PATH.get_base_dir()))
+	var file := FileAccess.open(TMP_PATH, FileAccess.WRITE)
+	file.store_string(JSON.stringify(document))
+	file.close()
+	var emitted: Array[InputEvent] = []
+	recorder.emit_event = func(event: InputEvent) -> void: emitted.append(event)
+	assert_has_key(recorder.start_replay(TMP_PATH, Vector2i(10, 10)), "replaying")
+	recorder.tick()
+	assert_eq(recorder.replay_status().state, "idle")
+	assert_eq(recorder.replay_status().released_at_end, 2, "A and the left button were still down")
+	var tail := emitted.slice(4)
+	assert_eq(tail.size(), 2)
+	for event in tail:
+		assert_false(event.is_pressed(), "%s is released" % event.as_text())
