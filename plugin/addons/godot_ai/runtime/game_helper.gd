@@ -727,7 +727,7 @@ func _build_mouse_event(params: Dictionary) -> Dictionary:
 			var bit := 1 << (button_event.button_index - 1)
 			var event_mask := _mouse_button_mask | bit if button_event.pressed else _mouse_button_mask & ~bit
 			button_event.button_mask = event_mask
-			if str(params.get("button", "left")) in HELD_MOUSE_BUTTONS:
+			if button_event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
 				_mouse_button_mask = event_mask
 			_last_mouse_position = pos
 			return {"input": button_event, "reply": {

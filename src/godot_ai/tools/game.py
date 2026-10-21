@@ -50,7 +50,8 @@ Ops:
         previous mouse event, so press, motion..., release performs a GUI
         drag-and-drop. buttons (motion only) overrides the held set for that
         event, e.g. ["left"]; names: left, right, middle. Wheel steps are
-        one-shot and never held. Replies list the held buttons.
+        one-shot and never held. Button replies list the buttons held after
+        the event; motion replies list the buttons that motion carried.
   - input_gamepad(device=0, control="button", index=0, pressed=True, value=0.0)
         Send a joypad button or axis event. control: "button" | "axis".
   - input_action(action, pressed=True, strength=1.0)
