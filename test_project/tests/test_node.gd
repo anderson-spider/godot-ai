@@ -2003,6 +2003,36 @@ func test_duplicate_grid_refuses_a_name_collision_before_changing_anything() -> 
 	assert_true(editor_undo(_undo_redo), "undo source")
 
 
+func test_duplicate_grid_of_an_instance_keeps_inner_nodes_in_each_copy() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	var tmp_root := Node2D.new()
+	tmp_root.name = "GridInstanceRoot"
+	var tmp_child := Node2D.new()
+	tmp_child.name = "Inner"
+	tmp_root.add_child(tmp_child)
+	tmp_child.owner = tmp_root
+	var packed := PackedScene.new()
+	packed.pack(tmp_root)
+	var tmp_path := "res://tests/_mcp_test_grid_instance.tscn"
+	ResourceSaver.save(packed, tmp_path)
+	tmp_root.free()
+	assert_has_key(_handler.create_node({"scene_path": tmp_path, "name": "_McpGridInst"}), "data")
+	var result := _handler.duplicate_node_grid({"path": "/Main/_McpGridInst", "columns": 2, "column_step": [10, 0]})
+	assert_has_key(result, "data")
+	var copy: Node = scene_root.get_node_or_null("_McpGridInst1")
+	assert_ne(copy, null)
+	if copy != null:
+		assert_eq(copy.owner, scene_root)
+		assert_eq(copy.scene_file_path, tmp_path, "the copy stays an instance")
+		var inner: Node = copy.get_node_or_null("Inner")
+		assert_ne(inner, null)
+		if inner != null:
+			assert_eq(inner.owner, copy, "the inner node stays owned by the copied instance")
+	assert_true(editor_undo(_undo_redo), "undo grid")
+	assert_true(editor_undo(_undo_redo), "undo instance")
+	DirAccess.remove_absolute(tmp_path)
+
+
 func test_duplicate_grid_rejects_bad_params() -> void:
 	if _grid_source("Node2D", "_McpGridBad", Vector2.ZERO) == null:
 		return
