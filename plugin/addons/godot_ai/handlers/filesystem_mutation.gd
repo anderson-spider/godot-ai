@@ -264,7 +264,7 @@ func _collect_tree(root: String, files: Array[String]) -> bool:
 				# Engine metadata, VCS internals and the immutable loaded plugin
 				# implementation are outside the user-resource owner scan.
 				if child not in ["res://.godot", "res://.git", PLUGIN_TREE]:
-					var skipped := dir.current_is_dir() and not _scanned(child)
+					var skipped := dir.current_is_dir() and not _scanned(child, dir.current_is_hidden())
 					if not skipped and (not dir.has_method("is_link") or bool(dir.call("is_link", child))):
 						_fault = "Cannot establish ownership through a linked entry: %s" % child
 						dir.list_dir_end()
@@ -294,9 +294,13 @@ func _collect_tree(root: String, files: Array[String]) -> bool:
 ## folder or one holding a `.gdignore`, so neither holds owners; art sources or
 ## tool links kept there would otherwise exceed MAX_ENTRIES or refuse every
 ## mutation. Such a folder is still walked when it holds or lies inside a
-## mutation path, so mutating there keeps the full census.
-func _scanned(directory: String) -> bool:
-	if not directory.get_file().begins_with(".") and not FileAccess.file_exists(directory.path_join(".gdignore")):
+## mutation path, so mutating there keeps the full census. `hidden` carries
+## the platform flag (FILE_ATTRIBUTE_HIDDEN on Windows), which EditorFileSystem
+## also skips. Anchors match case-insensitively: on a case-insensitive volume
+## a differently cased mutation path still lies inside the folder, and on a
+## case-sensitive one the looser match only walks an extra folder.
+func _scanned(directory: String, hidden: bool) -> bool:
+	if not hidden and not directory.get_file().begins_with(".") and not FileAccess.file_exists(directory.path_join(".gdignore")):
 		return true
 	var folder := directory.to_lower() + "/"
 	for anchor: String in _anchors:

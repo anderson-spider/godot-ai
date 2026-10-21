@@ -743,10 +743,16 @@ func test_mutation_gdignore_folder_is_not_scanned_for_owners() -> void:
 	_mutation_write(owner, owner_text)
 	var result: Dictionary = await Mutation.new().run({"path": source, "new_path": destination}, "move")
 	assert_has_key(result, "data", "an owner Godot ignores must not block the move: %s" % str(result))
+	if result.has("data"):
+		assert_eq(result.data.outcome, "committed")
+		assert_eq(result.data.new_path, destination)
 	assert_true(FileAccess.file_exists(destination))
 	assert_eq(FileAccess.get_file_as_string(owner), owner_text)
 	var inside: Dictionary = await Mutation.new().run({"path": owner, "permanent": true}, "remove")
 	assert_has_key(inside, "data", "a mutation inside an ignored folder still walks it: %s" % str(inside))
+	if inside.has("data"):
+		assert_eq(inside.data.outcome, "committed")
+		assert_eq(inside.data.path, owner)
 	assert_false(FileAccess.file_exists(owner))
 	DirAccess.remove_absolute(folder.path_join(".gdignore"))
 	DirAccess.remove_absolute(folder)
@@ -765,6 +771,9 @@ func test_mutation_link_inside_hidden_folder_does_not_refuse() -> void:
 	_mutation_write(source, "inside")
 	var result: Dictionary = await Mutation.new().run({"path": source, "new_path": MUTATION_ROOT + "_moved.txt"}, "move")
 	assert_has_key(result, "data", "a link Godot never scans must not refuse the move: %s" % str(result))
+	if result.has("data"):
+		assert_eq(result.data.outcome, "committed")
+		assert_eq(result.data.new_path, MUTATION_ROOT + "_moved.txt")
 	assert_eq(FileAccess.get_file_as_string(MUTATION_ROOT + "_moved.txt"), "inside")
 	var through: Dictionary = await Mutation.new().run({"path": link, "force": true}, "remove")
 	assert_is_error(through, "INVALID_PARAMS")
