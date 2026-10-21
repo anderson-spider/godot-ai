@@ -208,6 +208,49 @@ never compiles .NET, so nothing on this surface reports a C# compiler error.
 A .NET build/diagnostics channel is tracked separately from this text-only
 contract.
 
+## Finding usages
+
+`script_manage(op="find_usages")` asks the editor's own GDScript language
+server for the references of one symbol, so the answer is semantic: calls
+through inheritance and from other files resolve, and a same-named member of
+an unrelated class does not match. Name the symbol declared in `path` with
+`symbol` (`hit`, or `Stats.hit` / `Player.hit` when the bare name is
+ambiguous; an ambiguous name fails with `data.candidates`) or with its
+declaration `line`; add `column` to query the identifier at any position,
+including a use of a symbol declared in another file. Lines and columns are
+1-based in both directions.
+
+- `usages` lists `{path, line, column, end_column, is_declaration}` sorted by
+  file; `limit` (default 200) caps the list, while `usage_count` and
+  `file_count` count everything.
+- `resolved: false` (no usages at all) means the position did not resolve to
+  a symbol. It never means "unused": Godot always lists a resolved
+  declaration among its own references.
+- For a method or a signal, `scene_connections` adds the `[connection]`
+  entries of text `.tscn`/`.tres` files naming it, which no `.gd` call site
+  shows. These match by name only (`scene_connections_match: "name"`), so a
+  same-named method on another script matches too; binary `.scn`/`.res` are
+  counted in `scene_connections_skipped_binary`, not read.
+- The language server reads saved files, not unsaved editor buffers, and does
+  not see uses by string (`call("hit")`, `connect("died", ...)`) or calls on
+  a value Godot cannot type: `x.hit()` with an untyped parameter `x` is
+  missed, while a variable whose type Godot infers from its assignment is
+  found.
+- The editor answers synchronously while it scans every `.gd`: seconds on a
+  large project, during which the editor does not respond.
+
+The Python server connects to the language server's TCP port (the
+`network/language_server/remote_port` editor setting, 6005 by default, or the
+editor's `--lsp-port` launch flag) over loopback only. Two editors cannot
+share that port: the second one's language server fails to start, and its
+`find_usages` would reach the first editor's. Each call therefore sends this
+project's root in `initialize` and fails with `LSP_WRONG_PROJECT` (naming the
+other root) when the server answers for another project, instead of returning
+the empty lists Godot gives for files outside its project. Launch each extra
+editor with `--lsp-port <port>`. `LSP_UNAVAILABLE` carries `data.reason`:
+`connect_failed`, `timeout`, `connection_closed`, `protocol_error`,
+`request_failed`, `non_loopback_host`, `not_in_build` or `no_outline`.
+
 ## Domain rollups (`<domain>_manage`)
 
 Each rollup is a single MCP tool dispatched by `op` name + `params` dict.
@@ -231,7 +274,7 @@ Calls take the form:
 |------|-----|
 | `scene_manage` | `create`, `save_as`, `get_roots` |
 | `node_manage` | `get_children`, `get_groups`, `delete`, `duplicate`, `duplicate_grid`, `rename`, `move`, `reparent`, `add_to_group`, `remove_from_group` |
-| `script_manage` | `read`, `detach`, `find_symbols` (`.gd` and `.cs`), `reload` |
+| `script_manage` | `read`, `detach`, `find_symbols` (`.gd` and `.cs`), `reload`, `find_usages` (`.gd`) |
 | `project_manage` | `stop`, `settings_get`, `settings_set`, `set_main_scene`, `export_presets`, `export` |
 | `editor_manage` | `state`, `selection_get`, `selection_set`, `monitors_get`, `quit`, `logs_clear`, `game_eval`, `compare_images` |
 | `session_manage` | `list` |

@@ -1,7 +1,8 @@
 """MCP tools for script creation, reading, and management.
 
 Top-level: ``script_create``, ``script_attach``, ``script_patch`` (high-traffic).
-Everything else (detach, read, find_symbols, reload) collapses into ``script_manage``.
+Everything else (detach, read, find_symbols, reload, find_usages) collapses into
+``script_manage``.
 """
 
 from __future__ import annotations
@@ -42,6 +43,31 @@ Ops:
         dependents are skipped (dependency_failed). Scripts reached only by
         load() or class_name are not followed. The Godot AI plugin's own
         scripts are never reloaded. Not undoable.
+  • find_usages(path, symbol="", line=0, column=0,
+                include_scene_connections=True, limit=200)
+        Semantic references of a GDScript symbol across every .gd in the
+        project, from the editor's own GDScript language server (inherited
+        calls and other files included). Name the symbol declared in
+        ``path`` by ``symbol`` (qualify an ambiguous name as ``Inner.name``
+        or ``ClassName.name``) or by its declaration ``line`` (1-based, as
+        find_symbols reports it); add ``column`` to query any identifier at
+        that position, including a use of a symbol declared elsewhere.
+        ``symbol`` in the reply is the declaration with its own ``path``
+        (another file for an inherited member), or null when the position
+        is not a script declaration's identifier (a native method, a
+        keyword). Returns ``usages`` [{path, line, column, end_column,
+        is_declaration}] sorted by file, ``usage_count``, ``file_count``,
+        ``truncated``. ``resolved=false`` (no usages) means the position
+        did not resolve to a symbol, not that it is unused. For a method or
+        signal, ``scene_connections`` lists the .tscn/.tres
+        ``[connection]`` entries naming it — matched by name only, so a
+        same-named method on another script also matches. Reads saved
+        files, not unsaved editor buffers; uses by string (``call("x")``)
+        and calls on untyped values (``func f(x): x.hit()``) are not found.
+        The editor blocks while the server scans (seconds on large
+        projects). Errors: LSP_UNAVAILABLE (``data.reason``),
+        LSP_WRONG_PROJECT when another editor holds the language-server
+        port — launch this editor with ``--lsp-port <port>``.
 
 Language support: GDScript is the full contract. C# (.cs) is text-only —
 files are written, read and outlined, but Godot AI does not build .NET or
@@ -153,10 +179,12 @@ def register_script_tools(mcp: FastMCP) -> None:
             "detach": script_handlers.script_detach,
             "find_symbols": script_handlers.script_find_symbols,
             "reload": script_handlers.script_reload,
+            "find_usages": script_handlers.script_find_usages,
         },
         read_resource_forms={
             "read": "godot://script/{path*}",
             "find_symbols": None,  ## Per-script symbol lookup; no resource form.
             "reload": None,  ## Mutates editor state; no resource form.
+            "find_usages": None,  ## Per-symbol language-server query; no resource form.
         },
     )

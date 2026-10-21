@@ -39,6 +39,13 @@ class ErrorCode(StrEnum):
     # error.data carries the partial summary and get_test_results keeps the
     # partial results. Keep in sync with utils/error_codes.gd.
     TEST_RUN_TIMEOUT = "TEST_RUN_TIMEOUT"
+    # script_manage(op="find_usages") talks to the editor's GDScript language
+    # server directly. Python-only: the plugin never emits these. UNAVAILABLE
+    # covers a closed port, a non-loopback host, a timeout, or a malformed
+    # reply (data.reason says which); WRONG_PROJECT means the port belongs to
+    # another editor, whose answers would silently be empty for this project.
+    LSP_UNAVAILABLE = "LSP_UNAVAILABLE"
+    LSP_WRONG_PROJECT = "LSP_WRONG_PROJECT"
     # game_eval failure codes (#490): distinguish a compile/parse failure
     # or a runtime error from the generic 10s timeout so agents get a fast,
     # actionable reply. Keep in sync with utils/error_codes.gd.

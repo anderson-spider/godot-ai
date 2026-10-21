@@ -5,6 +5,13 @@ const ErrorCodes := preload("res://addons/godot_ai/utils/error_codes.gd")
 const DiagnosticsCapture := preload("res://addons/godot_ai/utils/diagnostics_capture.gd")
 const ValidationLogger := preload("res://addons/godot_ai/runtime/validation_logger.gd")
 const ScriptReloader := preload("res://addons/godot_ai/utils/script_reloader.gd")
+const SceneConnectionScan := preload("res://addons/godot_ai/utils/scene_connection_scan.gd")
+
+const LSP_SINGLETON := "GDScriptLanguageProtocol"
+const LSP_HOST_SETTING := "network/language_server/remote_host"
+const LSP_PORT_SETTING := "network/language_server/remote_port"
+const LSP_DEFAULT_HOST := "127.0.0.1"
+const LSP_DEFAULT_PORT := 6005
 
 ## Handles script creation, reading, attaching, detaching, and symbol inspection.
 ##
@@ -726,6 +733,69 @@ func find_symbols(params: Dictionary) -> Dictionary:
 			"export_count": exports.size(),
 		}
 	}
+
+
+## Where this editor's GDScript language server listens, for the server-side
+## LSP client behind script_manage(op="find_usages"). The port is the
+## --lsp-port launch override when present, else the editor setting.
+## project_root is the exact string the language server compares a client's
+## rootPath with (no trailing slash), so the client can tell this editor's
+## server from another editor's holding the same port. `path`, the .gd the
+## client will query, goes through the same validation as every other script
+## entry point and comes back absolute as `file`.
+func lsp_endpoint(params: Dictionary) -> Dictionary:
+	var path: String = params.get("path", "")
+	var path_err = McpPathValidator.path_error(path, "path")
+	if path_err != null:
+		return path_err
+	if script_language(path) != LANGUAGE_GDSCRIPT:
+		return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "find_usages needs a .gd file: the GDScript language server does not index %s" % path)
+	if not FileAccess.file_exists(path):
+		return ErrorCodes.make(ErrorCodes.RESOURCE_NOT_FOUND, "File not found: %s" % path)
+	var settings := EditorInterface.get_editor_settings()
+	var host := LSP_DEFAULT_HOST
+	var port := LSP_DEFAULT_PORT
+	if settings != null and settings.has_setting(LSP_HOST_SETTING):
+		host = str(settings.get_setting(LSP_HOST_SETTING))
+	if settings != null and settings.has_setting(LSP_PORT_SETTING):
+		port = int(settings.get_setting(LSP_PORT_SETTING))
+	var port_source := "editor_settings"
+	var override := lsp_port_override(OS.get_cmdline_args())
+	if override > 0:
+		port = override
+		port_source = "cmdline"
+	return {
+		"data": {
+			"available": Engine.has_singleton(LSP_SINGLETON),
+			"host": host,
+			"port": port,
+			"port_source": port_source,
+			"project_root": ProjectSettings.globalize_path("res://").trim_suffix("/"),
+			"file": ProjectSettings.globalize_path(path),
+		}
+	}
+
+
+## The --lsp-port value in `args`, or -1 when the editor was launched without
+## one (Godot then listens on the editor setting's port).
+static func lsp_port_override(args: PackedStringArray) -> int:
+	for i in args.size():
+		var arg := args[i]
+		if arg == "--lsp-port" and i + 1 < args.size() and args[i + 1].is_valid_int():
+			return args[i + 1].to_int()
+		if arg.begins_with("--lsp-port=") and arg.substr(11).is_valid_int():
+			return arg.substr(11).to_int()
+	return -1
+
+
+func find_scene_connections(params: Dictionary) -> Dictionary:
+	var method: Variant = params.get("method", "")
+	var signal_name: Variant = params.get("signal", "")
+	if not (method is String) or not (signal_name is String):
+		return ErrorCodes.make(ErrorCodes.WRONG_TYPE, "method and signal must be strings")
+	if method.is_empty() and signal_name.is_empty():
+		return ErrorCodes.make(ErrorCodes.MISSING_REQUIRED_PARAM, "Pass method or signal to match connections against")
+	return {"data": SceneConnectionScan.find(method, signal_name)}
 
 
 # ----- C# outline ------------------------------------------------------------
