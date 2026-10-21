@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -125,6 +126,12 @@ func _run() -> void:
 """
 
 
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 @pytest.mark.parametrize(
     "mode", ["authorized", "wrong-token", "wrong-certificate", "wrong-hostname"]
 )
@@ -229,7 +236,19 @@ def test_unchanged_update_manager_discovers_and_downloads_over_private_https(tmp
         if not authorized:
             environment["GODOT_AI_QUALIFICATION_TOKEN"] = "0" * 64
         imported = subprocess.run(
-            [godot, "--headless", "--editor", "--path", str(project), "--import"],
+            [
+                godot,
+                "--headless",
+                "--editor",
+                "--path",
+                str(project),
+                "--import",
+                ## An editor already open on this machine holds the default
+                ## language-server port; this one's server would fail to start
+                ## and print an ERROR on exit that the assertion below rejects.
+                "--lsp-port",
+                str(_free_port()),
+            ],
             env=environment,
             capture_output=True,
             timeout=60,
