@@ -75,6 +75,22 @@ Ops:
         backgrounded game window. Cannot run inside batch_execute.
   - input_state(actions=None)
         Read current action pressed states. Empty actions = all project actions.
+  - input_record_start(path="")
+        Start recording the input the running game receives (including what
+        input_* ops inject) to a .json under user:// (default
+        user://mcp_recordings/recording_<time>.json) or res://. Events are
+        kept by the frame they arrived on, with the window size in the header.
+  - input_record_stop()
+        Stop and write the recording; returns path, events, frames,
+        duration_ms, window_size and truncated (past 100000 events).
+  - input_replay(path)
+        Play a recording back from now, frame by frame, and return at once
+        with its event and frame counts. Refused while recording or replaying,
+        or when the window size differs from the recording's (resize first,
+        e.g. project_run(window_size=...)). Nothing is recorded meanwhile.
+  - input_replay_status()
+        state (idle | recording | replaying), events_applied/events_total,
+        frame/frames_total and finished for the last replay.
   - window_set_size(size)
         Resize the running game's window to size=[width, height] and reply,
         two frames later, with {requested, actual, embedded, applied}. A game
@@ -102,6 +118,10 @@ def register_game_tools(mcp: FastMCP) -> None:
             "input_action": game_handlers.game_input_action,
             "input_sequence": game_handlers.game_input_sequence,
             "input_state": game_handlers.game_input_state,
+            "input_record_start": game_handlers.game_input_record_start,
+            "input_record_stop": game_handlers.game_input_record_stop,
+            "input_replay": game_handlers.game_input_replay,
+            "input_replay_status": game_handlers.game_input_replay_status,
             "window_set_size": game_handlers.game_window_set_size,
         },
         read_resource_forms={
@@ -118,6 +138,10 @@ def register_game_tools(mcp: FastMCP) -> None:
             "input_action": None,
             "input_sequence": None,
             "input_state": None,
+            "input_record_start": None,
+            "input_record_stop": None,
+            "input_replay": None,
+            "input_replay_status": None,
             "window_set_size": None,
         },
     )

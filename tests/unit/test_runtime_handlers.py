@@ -1982,6 +1982,28 @@ async def test_game_input_state_sends_game_command():
     }
 
 
+async def test_game_input_recording_ops_send_game_commands():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+
+    await game_handlers.game_input_record_start(runtime)
+    assert client.calls[-1]["params"] == {"op": "input_record_start", "params": {}}
+    await game_handlers.game_input_record_start(runtime, path="user://take.json")
+    assert client.calls[-1]["params"] == {
+        "op": "input_record_start",
+        "params": {"path": "user://take.json"},
+    }
+    await game_handlers.game_input_record_stop(runtime)
+    assert client.calls[-1]["params"] == {"op": "input_record_stop", "params": {}}
+    await game_handlers.game_input_replay(runtime, path="user://take.json")
+    assert client.calls[-1]["params"] == {
+        "op": "input_replay",
+        "params": {"path": "user://take.json"},
+    }
+    await game_handlers.game_input_replay_status(runtime)
+    assert client.calls[-1]["params"] == {"op": "input_replay_status", "params": {}}
+
+
 async def test_game_window_set_size_sends_game_command():
     client = StubClient()
     runtime = DirectRuntime(registry=SessionRegistry(), client=client)

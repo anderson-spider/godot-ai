@@ -181,6 +181,25 @@ async def game_window_set_size(
     return await _game_command(runtime, "window_set_size", {"size": size})
 
 
+async def game_input_record_start(runtime: DirectRuntime, path: str = "") -> dict:
+    params: dict[str, Any] = {}
+    if path:
+        params["path"] = path
+    return await _game_command(runtime, "input_record_start", params)
+
+
+async def game_input_record_stop(runtime: DirectRuntime) -> dict:
+    return await _game_command(runtime, "input_record_stop", {})
+
+
+async def game_input_replay(runtime: DirectRuntime, path: str) -> dict:
+    return await _game_command(runtime, "input_replay", {"path": path})
+
+
+async def game_input_replay_status(runtime: DirectRuntime) -> dict:
+    return await _game_command(runtime, "input_replay_status", {})
+
+
 def _invalid_params(message: str) -> GodotCommandError:
     return GodotCommandError(code=ErrorCode.INVALID_PARAMS, message=message)
 

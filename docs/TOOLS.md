@@ -243,7 +243,7 @@ Calls take the form:
 | `camera_manage` | `create`, `configure`, `set_limits_2d`, `set_damping_2d`, `follow_2d`, `get`, `list`, `apply_preset` |
 | `signal_manage` | `list`, `connect`, `disconnect` |
 | `input_map_manage` | `list`, `add_action`, `ensure_action`, `remove_action`, `bind_event`, `ensure_binding` |
-| `game_manage` | `get_scene_tree`, `get_node_info`, `get_ui_elements`, `suspend`, `resume`, `next_frame`, `debug_status`, `input_key`, `input_mouse`, `input_gamepad`, `input_action`, `input_sequence`, `input_state`, `window_set_size` |
+| `game_manage` | `get_scene_tree`, `get_node_info`, `get_ui_elements`, `suspend`, `resume`, `next_frame`, `debug_status`, `input_key`, `input_mouse`, `input_gamepad`, `input_action`, `input_sequence`, `input_state`, `input_record_start`, `input_record_stop`, `input_replay`, `input_replay_status`, `window_set_size` |
 | `autoload_manage` | `list`, `add`, `remove` |
 | `filesystem_manage` | `read_text`, `write_text`, `reimport`, `scan`, `search`, `move`, `rename`, `remove` |
 | `theme_manage` | `create`, `set_color`, `set_constant`, `set_font_size`, `set_stylebox_flat`, `set_stylebox_texture`, `set_font`, `set_icon`, `stylebox_override`, `apply` |

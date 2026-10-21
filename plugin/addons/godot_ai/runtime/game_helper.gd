@@ -60,6 +60,7 @@ const ErrorCodes := preload("res://addons/godot_ai/utils/error_codes.gd")
 ## path, not class_name: this autoload runs in the game process and must not
 ## depend on the editor's global-class cache being warm.
 const ScreenshotEncode := preload("res://addons/godot_ai/utils/screenshot_encode.gd")
+const InputRecorder := preload("res://addons/godot_ai/runtime/input_recorder.gd")
 
 var _registered := false
 ## Captures game-process print, warning, and error output for the editor.
@@ -138,6 +139,8 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_mcp_runtime_process_ticks += 1
+	if _recorder != null:
+		_recorder.tick()
 	## #777: liveness beacon for _handle_take_screenshot's stalled-loop check.
 	## Recorded before the early returns below so the signal stays truthful
 	## even when the logger or debugger channel is unavailable.
@@ -430,6 +433,11 @@ func _handle_game_command(data: Array) -> void:
 			## screenshot capture paths.
 			_run_input_sequence(request_id, json.data)
 			return
+		"input_record_start", "input_record_stop", "input_replay", "input_replay_status":
+			result = _game_input_recording(op, json.data)
+			if result.has("error"):
+				_reply_game_command_error(request_id, str(result.error))
+				return
 		"window_set_size":
 			## Async: the size settles a couple of frames after the request.
 			_run_window_set_size(request_id, json.data)
@@ -974,6 +982,30 @@ func _actions_pressed_at_end(steps: Array) -> Array:
 		if Input.is_action_pressed(action):
 			pressed.append(action)
 	return pressed
+
+
+## Created on first use of the input_record_*/input_replay ops.
+var _recorder: InputRecorder = null
+
+
+func _game_input_recording(op: String, params: Dictionary) -> Dictionary:
+	if _recorder == null:
+		_recorder = InputRecorder.new()
+	var root := get_tree().root
+	match op:
+		"input_record_start":
+			var started := _recorder.start_recording(str(params.get("path", "")), root.size)
+			if not started.has("error") and not root.window_input.is_connected(_recorder.capture):
+				root.window_input.connect(_recorder.capture)
+			return started
+		"input_record_stop":
+			var stopped := _recorder.stop_recording()
+			if not stopped.has("error") and root.window_input.is_connected(_recorder.capture):
+				root.window_input.disconnect(_recorder.capture)
+			return stopped
+		"input_replay":
+			return _recorder.start_replay(str(params.get("path", "")), root.size)
+	return _recorder.replay_status()
 
 
 const WINDOW_SIZE_SETTLE_FRAMES := 2
