@@ -74,15 +74,23 @@ dependencies on its own. A filesystem scan or plugin reload is not a
 substitute: a headless editor skips the refresh, and neither orders
 dependents.
 
-**Open risk: a refreshed script can be written back over a newer file.**
-Both refresh paths assign `source_code` on the cached script. In one of four
-GUI-editor attempts on Godot 4.7.2 (load `a.gd`, edit it to v2 outside the
-editor, `script_manage(op="reload")`, edit it to v3 outside the editor), the
-editor wrote the in-memory v2 back over v3 within a few seconds, before any
-save or quit; a loaded control script edited the same way without a reload
-kept v3. The other three attempts, and a forced `save_all_scenes()`, kept v3,
-so the trigger is unconfirmed (possibly a race with the editor's filesystem
-scan right after launch). Until it is understood, call
-`script_manage(op="reload")` again after every outside edit of a loaded
-script, so the in-memory copy never lags the file, and check the file before
-trusting it after an editor session that refreshed scripts.
+**A refreshed script is never written back over a newer file.** Both refresh
+paths push the new source with `set_source_code()`, never as
+`script.source_code = ...`. In the editor, a property assignment goes through
+`Object::set()`, which flags the script as edited, and every scene save runs
+`EditorNode::_save_external_resources`, which writes each edited cached
+resource to its file without comparing it with the disk. With the
+assignment, `script_manage(op="reload")` followed by an outside edit and any
+scene save (`scene_save`, running the project with a dirty scene, Ctrl+S,
+save on focus loss) wrote the reloaded version over the newer file;
+`script_patch` escaped only because its `update_file` makes the editor reload
+the script from disk, which clears the flag.
+`test_script_reload.gd::test_a_scene_save_does_not_write_a_reloaded_script_over_a_newer_file`
+locks the fix.
+
+A script open in a Script Editor tab is a separate case: the tab keeps its
+own text, and the editor copies it back into the script on every scene save.
+`reload` marks such entries `open_in_script_editor: true`; the editor reloads
+the tab from disk when its window regains focus (the default
+`text_editor/behavior/files/auto_reload_scripts_on_external_change`), and a
+tab with unsaved changes asks first.

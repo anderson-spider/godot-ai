@@ -42,7 +42,11 @@ Ops:
         compile keeps its old code (``failed``, reason parse_error) and its
         dependents are skipped (dependency_failed). Scripts reached only by
         load() or class_name are not followed. The Godot AI plugin's own
-        scripts are never reloaded. Not undoable.
+        scripts are never reloaded. An entry with
+        ``open_in_script_editor: true`` is also open in a Script Editor tab,
+        whose own text the editor copies back on the next scene save until
+        it reloads the tab from disk (on window focus by default). Not
+        undoable.
   • find_usages(path, symbol="", line=0, column=0,
                 include_scene_connections=True, limit=200)
         Semantic references of a GDScript symbol across every .gd in the

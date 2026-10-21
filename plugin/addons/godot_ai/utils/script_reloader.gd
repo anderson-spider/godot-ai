@@ -157,6 +157,7 @@ static func reload_changed(roots: PackedStringArray, reset_static: bool) -> Dict
 	var reloaded: Array = []
 	var failed: Array = []
 	var failed_paths := {}
+	var open_in_editor := open_script_paths()
 	for path in order:
 		var blocked: String = ""
 		for dep: String in deps.get(path, []):
@@ -172,6 +173,8 @@ static func reload_changed(roots: PackedStringArray, reset_static: bool) -> Dict
 		var entry := _reload_one(scripts[path], disk[path], reset_static and reasons[path] != "dependent")
 		entry["path"] = path
 		entry["reason"] = reasons[path]
+		if open_in_editor.has(path):
+			entry["open_in_script_editor"] = true
 		if entry.has("error"):
 			entry["reason"] = entry.get("failure", "reload_failed")
 			entry.erase("failure")
@@ -195,6 +198,21 @@ static func reload_changed(roots: PackedStringArray, reset_static: bool) -> Dict
 	}
 
 
+## Paths of the scripts open in Script Editor tabs. A tab keeps its own text,
+## and the editor copies that text back into the script when it saves a scene,
+## so a reloaded script open in a tab runs the tab's text again until the
+## editor reloads the tab from disk (on focus, by default).
+static func open_script_paths() -> Dictionary:
+	var paths := {}
+	var script_editor := EditorInterface.get_script_editor()
+	if script_editor == null:
+		return paths
+	for script: Script in script_editor.get_open_scripts():
+		if script != null and not script.resource_path.is_empty():
+			paths[script.resource_path] = true
+	return paths
+
+
 ## Depth-first, dependencies before dependents; a cycle is broken where it closes.
 static func _visit(path: String, selected: Dictionary, deps: Dictionary, visited: Dictionary, order: Array[String]) -> void:
 	if visited.has(path):
@@ -209,9 +227,16 @@ static func _visit(path: String, selected: Dictionary, deps: Dictionary, visited
 ## Push `source` into `script` and recompile it. On failure the previous source
 ## is put back and recompiled, so the script keeps running its old code instead
 ## of being left invalid.
+##
+## The source goes in through the set_source_code() call, never as
+## `script.source_code = ...`: in the editor a property assignment goes through
+## Object::set(), which flags the script as edited, and the next scene save
+## (EditorNode::_save_external_resources) writes every edited cached resource
+## to its file without looking at the disk — overwriting an outside edit made
+## after this reload.
 static func _reload_one(script: GDScript, source: String, reset_static: bool) -> Dictionary:
 	var previous := script.source_code
-	script.source_code = source
+	script.set_source_code(source)
 	var err := script.reload(not reset_static)
 	var entry := {"static_reset": reset_static}
 	if err == ERR_ALREADY_IN_USE and reset_static:
@@ -220,7 +245,7 @@ static func _reload_one(script: GDScript, source: String, reset_static: bool) ->
 		entry["instances_alive"] = true
 	if err == OK:
 		return entry
-	script.source_code = previous
+	script.set_source_code(previous)
 	script.reload(true)
 	return {
 		"failure": "parse_error" if err == ERR_PARSE_ERROR or err == ERR_COMPILATION_FAILED else "reload_failed",

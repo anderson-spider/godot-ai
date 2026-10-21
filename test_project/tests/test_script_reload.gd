@@ -156,6 +156,39 @@ func test_a_script_that_fails_to_compile_keeps_its_old_code_and_skips_dependents
 	assert_eq(leaf.version(), 1)
 
 
+## A reloaded script must not be written back over a newer file. The editor
+## saves every cached resource flagged as edited whenever it saves a scene
+## (EditorNode::_save_external_resources), without comparing with the disk.
+func test_a_scene_save_does_not_write_a_reloaded_script_over_a_newer_file() -> void:
+	var scripts := _install("clobber", {"leaf.gd": LEAF_V1})
+	assert_true(scripts["leaf.gd"] != null)
+	var leaf_path := _dir + "leaf.gd"
+	_write(leaf_path, LEAF_V2)
+	var result := _handler.reload_scripts({"paths": [leaf_path]})
+	assert_eq(_reloaded(result.data), [["leaf.gd", "changed"]])
+	assert_false(result.data.reloaded[0].has("open_in_script_editor"), "the probe is not open in a Script Editor tab")
+	var v3 := LEAF_V2.replace("return 2", "return 3")
+	_write(leaf_path, v3)
+
+	var previous_scene := ""
+	var root := EditorInterface.get_edited_scene_root()
+	if root != null:
+		previous_scene = root.scene_file_path
+	var scene_path := _dir + "save_probe.tscn"
+	_write(scene_path, "[gd_scene format=3]\n\n[node name=\"SaveProbe\" type=\"Node\"]\n")
+	_written.append(scene_path)
+	EditorInterface.get_resource_filesystem().update_file(scene_path)
+	EditorInterface.open_scene_from_path(scene_path)
+	EditorInterface.mark_scene_as_unsaved()
+	var err := EditorInterface.save_scene()
+	EditorInterface.close_scene()
+	if not previous_scene.is_empty():
+		EditorInterface.open_scene_from_path(previous_scene)
+
+	assert_eq(err, OK, "the probe scene should save")
+	assert_eq(FileAccess.get_file_as_string(leaf_path), v3, "the newer file on disk survives the scene save")
+
+
 func test_reload_refuses_bad_paths() -> void:
 	assert_is_error(_handler.reload_scripts({"paths": ["res://addons/godot_ai/plugin.gd"]}), ErrorCodes.VALUE_OUT_OF_RANGE)
 	assert_is_error(_handler.reload_scripts({"paths": ["res://addons/godot_ai"]}), ErrorCodes.VALUE_OUT_OF_RANGE)

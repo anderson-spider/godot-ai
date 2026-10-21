@@ -348,7 +348,9 @@ static func _refresh_loaded_gdscript(data: Dictionary, path: String, content: St
 		data["reloaded"] = true
 		data["reload_reason"] = "already_current"
 		return
-	script.source_code = content
+	## The setter call, not `script.source_code = ...`: see
+	## ScriptReloader._reload_one for why a property assignment is unsafe.
+	script.set_source_code(content)
 	var err := script.reload(true)
 	if err != OK:
 		data["reload_reason"] = "reload_failed"
