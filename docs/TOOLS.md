@@ -232,7 +232,7 @@ Calls take the form:
 | `scene_manage` | `create`, `save_as`, `get_roots` |
 | `node_manage` | `get_children`, `get_groups`, `delete`, `duplicate`, `duplicate_grid`, `rename`, `move`, `reparent`, `add_to_group`, `remove_from_group` |
 | `script_manage` | `read`, `detach`, `find_symbols` (`.gd` and `.cs`) |
-| `project_manage` | `stop`, `settings_get`, `settings_set`, `set_main_scene` |
+| `project_manage` | `stop`, `settings_get`, `settings_set`, `set_main_scene`, `export_presets`, `export` |
 | `editor_manage` | `state`, `selection_get`, `selection_set`, `monitors_get`, `quit`, `logs_clear`, `game_eval`, `compare_images` |
 | `session_manage` | `list` |
 | `test_manage` | `results_get` |

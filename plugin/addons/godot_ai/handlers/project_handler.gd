@@ -447,6 +447,127 @@ static func _editor_nodes_where(predicate: Callable) -> Array[Node]:
 	return found
 
 
+const ExportPlugin := preload("res://addons/godot_ai/export/mcp_export_plugin.gd")
+const EXPORT_MESSAGE_TYPES := ["none", "info", "warning", "error"]
+
+
+## The project's export presets, from the platforms the editor has loaded.
+func export_presets(_params: Dictionary) -> Dictionary:
+	var presets: Array[Dictionary] = []
+	for os_name: String in ExportPlugin.platforms:
+		var platform: EditorExportPlatform = ExportPlugin.platforms[os_name]
+		if not is_instance_valid(platform):
+			continue
+		for preset: EditorExportPreset in platform.get_current_presets():
+			presets.append({
+				"name": preset.get_preset_name(),
+				"platform": os_name,
+				"export_path": preset.get_export_path(),
+				"runnable": preset.is_runnable(),
+				"dedicated_server": preset.is_dedicated_server(),
+			})
+	var data := {"presets": presets, "count": presets.size()}
+	if ExportPlugin.platforms.is_empty():
+		data["hint"] = "The editor has not reported its export platforms yet; retry after a frame."
+	elif presets.is_empty():
+		data["hint"] = "No export presets; add one in Project > Export (export_presets.cfg)."
+	return {"data": data}
+
+
+## "" when `path` may receive an export: outside the plugin and .godot, with a
+## file name. `path` is absolute or res:// (a bare relative path is read from
+## the project folder, as export_presets.cfg does).
+static func export_path_error(path: String) -> String:
+	if path.is_empty():
+		return "Missing path, and the preset has no export_path"
+	if path.get_file().is_empty():
+		return "path must name a file (got %s)" % path
+	if ".." in path.replace("\\", "/").split("/"):
+		return "path must not contain .. (got %s)" % path
+	var absolute := export_absolute_path(path)
+	for blocked in ["res://addons/godot_ai", "res://.godot"]:
+		var root := ProjectSettings.globalize_path(blocked)
+		if absolute == root or absolute.begins_with(root + "/"):
+			return "path must not be under %s (got %s)" % [blocked, path]
+	return ""
+
+
+static func export_absolute_path(path: String) -> String:
+	if path.begins_with("res://") or path.begins_with("user://"):
+		return ProjectSettings.globalize_path(path)
+	if path.is_absolute_path():
+		return path
+	return ProjectSettings.globalize_path("res://").path_join(path)
+
+
+## Export a preset in the editor process, the way the Export dialog does.
+## Synchronous: the editor is busy until the build is written.
+func export_project(params: Dictionary) -> Dictionary:
+	var preset_name := str(params.get("preset", ""))
+	if preset_name.is_empty():
+		return ErrorCodes.make(ErrorCodes.MISSING_REQUIRED_PARAM, "Missing required param: preset")
+	var matches: Array[Dictionary] = []
+	for os_name: String in ExportPlugin.platforms:
+		var platform: EditorExportPlatform = ExportPlugin.platforms[os_name]
+		if not is_instance_valid(platform):
+			continue
+		for preset: EditorExportPreset in platform.get_current_presets():
+			if preset.get_preset_name() == preset_name:
+				matches.append({"platform": platform, "os_name": os_name, "preset": preset})
+	if matches.is_empty():
+		return ErrorCodes.make(ErrorCodes.RESOURCE_NOT_FOUND, "No export preset named '%s'; list them with project_manage(op='export_presets')" % preset_name)
+	if matches.size() > 1:
+		return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "%d export presets are named '%s'; rename one so the name is unique" % [matches.size(), preset_name])
+	var found: Dictionary = matches[0]
+	var platform: EditorExportPlatform = found.platform
+	var preset: EditorExportPreset = found.preset
+	var path := str(params.get("path", ""))
+	if path.is_empty():
+		path = preset.get_export_path()
+	var path_err := export_path_error(path)
+	if not path_err.is_empty():
+		return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, path_err)
+	var debug := bool(params.get("debug", true))
+	var absolute := export_absolute_path(path)
+	var dir_err := DirAccess.make_dir_recursive_absolute(absolute.get_base_dir())
+	if dir_err != OK and dir_err != ERR_ALREADY_EXISTS:
+		return ErrorCodes.make(ErrorCodes.INTERNAL_ERROR, "Cannot create %s (%s)" % [absolute.get_base_dir(), error_string(dir_err)])
+
+	## Export renders progress dialogs that pump the main loop; the
+	## connection must not re-enter meanwhile (same as run_project).
+	if _connection:
+		_connection.pause_processing = true
+	var started := Time.get_ticks_msec()
+	platform.clear_messages()
+	var err := platform.export_project(preset, debug, absolute, 0)
+	var duration := Time.get_ticks_msec() - started
+	if _connection:
+		_connection.pause_processing = false
+
+	var messages: Array[Dictionary] = []
+	for i in platform.get_message_count():
+		messages.append({
+			"type": EXPORT_MESSAGE_TYPES[clampi(platform.get_message_type(i), 0, 3)],
+			"category": platform.get_message_category(i),
+			"text": platform.get_message_text(i),
+		})
+	if err != OK:
+		var details := "; ".join(messages.filter(func(m: Dictionary) -> bool: return m.type == "error").map(func(m: Dictionary) -> String: return "%s: %s" % [m.category, m.text]))
+		return ErrorCodes.make(ErrorCodes.INTERNAL_ERROR, "Export of '%s' failed (%s)%s" % [preset_name, error_string(err), (": " + details) if not details.is_empty() else ""])
+	return {
+		"data": {
+			"preset": preset_name,
+			"platform": found.os_name,
+			"path": absolute,
+			"debug": debug,
+			"duration_ms": duration,
+			"size_bytes": FileAccess.get_size(absolute) if FileAccess.file_exists(absolute) else -1,
+			"messages": messages,
+			"undoable": false,
+		}
+	}
+
+
 func _editor_log_cursor() -> int:
 	return _editor_log_buffer.appended_total() if _editor_log_buffer != null else 0
 

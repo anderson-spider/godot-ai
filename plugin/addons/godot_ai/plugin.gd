@@ -422,6 +422,8 @@ func _continue_enter_tree_after_update_barrier() -> void:
 	_dispatcher.register_lazy("run_project", "project", &"run_project")
 	_dispatcher.register_lazy("stop_project", "project", &"stop_project")
 	_dispatcher.register_lazy("search_filesystem", "project", &"search_filesystem")
+	_dispatcher.register_lazy("export_presets", "project", &"export_presets")
+	_dispatcher.register_lazy("export_project", "project", &"export_project")
 	_dispatcher.register_lazy("configure_client", "client", &"configure_client")
 	_dispatcher.register_lazy("remove_client", "client", &"remove_client")
 	_dispatcher.register_lazy("check_client_status", "client", &"check_client_status")

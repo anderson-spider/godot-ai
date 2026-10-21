@@ -291,6 +291,31 @@ func test_search_filesystem_no_results() -> void:
 	assert_eq(result.data.count, 0)
 
 
+# ----- export -----
+
+func test_export_platforms_are_captured_from_the_editor() -> void:
+	var ExportPlugin := preload("res://addons/godot_ai/export/mcp_export_plugin.gd")
+	assert_false(ExportPlugin.platforms.is_empty(), "EditorExport hands its platforms to the export plugin every frame")
+	var listed := _handler.export_presets({})
+	assert_has_key(listed, "data")
+	assert_eq(listed.data.count, listed.data.presets.size())
+
+
+func test_export_refuses_an_unknown_preset_and_bad_paths() -> void:
+	assert_is_error(_handler.export_project({}), ErrorCodes.MISSING_REQUIRED_PARAM)
+	assert_is_error(_handler.export_project({"preset": "_mcp_no_such_preset"}), ErrorCodes.RESOURCE_NOT_FOUND)
+	assert_eq(ProjectHandler.export_path_error("builds/game.zip"), "")
+	assert_eq(ProjectHandler.export_path_error("/tmp/mcp/game.zip"), "")
+	assert_contains(ProjectHandler.export_path_error(""), "Missing path")
+	assert_contains(ProjectHandler.export_path_error("builds/"), "file")
+	assert_contains(ProjectHandler.export_path_error("../outside/game.zip"), "..")
+	assert_contains(ProjectHandler.export_path_error("res://addons/godot_ai/game.zip"), "addons/godot_ai")
+	assert_contains(ProjectHandler.export_path_error("addons/godot_ai/game.zip"), "addons/godot_ai")
+	assert_contains(ProjectHandler.export_path_error(".godot/game.zip"), ".godot")
+	assert_eq(ProjectHandler.export_absolute_path("builds/game.zip"), ProjectSettings.globalize_path("res://").path_join("builds/game.zip"))
+	assert_eq(ProjectHandler.export_absolute_path("/tmp/game.zip"), "/tmp/game.zip")
+
+
 # ----- run_project -----
 
 func test_parse_run_window_size_accepts_lists_and_objects() -> void:

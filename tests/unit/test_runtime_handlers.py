@@ -4223,6 +4223,24 @@ async def test_project_run_handler_forwards_window_size():
     assert client.calls[-1]["params"] == {"mode": "main", "window_size": [1280, 720]}
 
 
+async def test_project_export_handlers_forward_params():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+    await project_handlers.project_export_presets(runtime)
+    assert client.calls[-1]["command"] == "export_presets"
+    await project_handlers.project_export(runtime, preset="macOS")
+    assert client.calls[-1]["command"] == "export_project"
+    assert client.calls[-1]["params"] == {"preset": "macOS", "debug": True}
+    await project_handlers.project_export(
+        runtime, preset="Web", path="builds/web/index.html", debug=False
+    )
+    assert client.calls[-1]["params"] == {
+        "preset": "Web",
+        "debug": False,
+        "path": "builds/web/index.html",
+    }
+
+
 async def test_project_stop_handler():
     client = StubClient()
     runtime = DirectRuntime(registry=SessionRegistry(), client=client)

@@ -1,7 +1,7 @@
 """MCP tools for project run/stop and project settings.
 
 Top-level: ``project_run`` (high-traffic). Everything else (stop, settings_get,
-settings_set) collapses into ``project_manage``.
+settings_set, set_main_scene, export_presets, export) collapses into ``project_manage``.
 """
 
 from __future__ import annotations
@@ -44,6 +44,17 @@ Ops:
         must be a ``res://`` scene inside the project that already exists and
         loads as a PackedScene, so a scaffolded project can be made runnable
         without opening the generic startup-execution surface.
+  • export_presets()
+        List the export presets: name, platform, export_path, runnable,
+        dedicated_server.
+  • export(preset, path="", debug=True)
+        Export a preset inside the editor, as the Export dialog does, for a
+        quick test build. path defaults to the preset's export_path (relative
+        paths are read from the project folder) and may not be under the
+        plugin or .godot. Synchronous: the editor is busy until the build is
+        written, so keep it to small builds. Returns path, size_bytes,
+        duration_ms and the platform's messages; a failed export (missing
+        templates, bad preset) is an error carrying those messages.
 """
 
 
@@ -116,10 +127,13 @@ def register_project_tools(mcp: FastMCP) -> None:
             "settings_get": project_handlers.project_settings_get,
             "settings_set": project_handlers.project_settings_set,
             "set_main_scene": project_handlers.project_set_main_scene,
+            "export_presets": project_handlers.project_export_presets,
+            "export": project_handlers.project_export,
         },
         read_resource_forms={
             ## stop ends a play session; not a read in the URI sense.
             "stop": None,
             "settings_get": "godot://project/settings",
+            "export_presets": None,
         },
     )

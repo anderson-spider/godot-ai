@@ -30,6 +30,8 @@ from godot_ai.runtime.direct import DirectRuntime
 ## strictly after the server began its own — so the margin costs nothing and
 ## removes the round-trip from the race.
 RUN_PROJECT_TIMEOUT_SEC = 8.0
+## An in-editor export is synchronous; this bounds a large test build.
+EXPORT_TIMEOUT_SEC = 600.0
 
 COMMON_SETTINGS = [
     "application/config/name",
@@ -74,6 +76,23 @@ async def project_stop(runtime: DirectRuntime) -> dict:
 async def project_settings_set(runtime: DirectRuntime, key: str, value: Any) -> dict:
     await require_writable_async(runtime)
     return await runtime.send_command("set_project_setting", {"key": key, "value": value})
+
+
+async def project_export_presets(runtime: DirectRuntime) -> dict:
+    return await runtime.send_command("export_presets", {})
+
+
+async def project_export(
+    runtime: DirectRuntime,
+    preset: str,
+    path: str = "",
+    debug: bool = True,
+) -> dict:
+    await require_writable_async(runtime)
+    params: dict[str, Any] = {"preset": preset, "debug": debug}
+    if path:
+        params["path"] = path
+    return await runtime.send_command("export_project", params, timeout=EXPORT_TIMEOUT_SEC)
 
 
 async def project_set_main_scene(runtime: DirectRuntime, path: str) -> dict:

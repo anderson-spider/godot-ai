@@ -35,9 +35,21 @@ const AUTOLOAD_KEY := "autoload/_mcp_game_helper"
 var _saved_value: Variant = null
 var _stripped := false
 
+## The editor's export platforms by OS name, for project_manage's export ops.
+## Godot exposes no list of them to scripts; EditorExport hands each one to
+## every export plugin's _should_update_export_options once per frame, so they
+## are collected there.
+static var platforms: Dictionary = {}
+
 
 func _get_name() -> String:
 	return "GodotAIStripAutoload"
+
+
+func _should_update_export_options(platform: EditorExportPlatform) -> bool:
+	if platform != null:
+		platforms[platform.get_os_name()] = platform
+	return false
 
 
 func _export_begin(_features: PackedStringArray, _is_debug: bool, _path: String, _flags: int) -> void:
