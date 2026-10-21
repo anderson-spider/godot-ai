@@ -674,6 +674,9 @@ const MOUSE_BUTTONS := {
 	"wheel_up": MOUSE_BUTTON_WHEEL_UP,
 	"wheel_down": MOUSE_BUTTON_WHEEL_DOWN,
 }
+## Buttons that stay held between events. A wheel step is an impulse with no
+## held state, so it never joins the held set or a motion mask.
+const HELD_MOUSE_BUTTONS: Array[String] = ["left", "right", "middle"]
 
 ## Buttons held through input_mouse button events. Motion carries them as its
 ## button_mask, as a physical drag does: GUI drag-and-drop and _gui_input
@@ -722,8 +725,10 @@ func _build_mouse_event(params: Dictionary) -> Dictionary:
 			button_event.button_index = _mouse_button_index(str(params.get("button", "left")))
 			button_event.pressed = bool(params.get("pressed", true))
 			var bit := 1 << (button_event.button_index - 1)
-			_mouse_button_mask = _mouse_button_mask | bit if button_event.pressed else _mouse_button_mask & ~bit
-			button_event.button_mask = _mouse_button_mask
+			var event_mask := _mouse_button_mask | bit if button_event.pressed else _mouse_button_mask & ~bit
+			button_event.button_mask = event_mask
+			if str(params.get("button", "left")) in HELD_MOUSE_BUTTONS:
+				_mouse_button_mask = event_mask
 			_last_mouse_position = pos
 			return {"input": button_event, "reply": {
 				"sent": true,
@@ -1024,15 +1029,15 @@ func _resolve_button_mask(value: Variant) -> Dictionary:
 		return {"error": "buttons must be a list of button names (got %s)" % type_string(typeof(value))}
 	var mask := 0
 	for name: Variant in value:
-		if not MOUSE_BUTTONS.has(str(name)):
-			return {"error": "Unknown mouse button in buttons: %s (expected one of %s)" % [str(name), str(MOUSE_BUTTONS.keys())]}
+		if str(name) not in HELD_MOUSE_BUTTONS:
+			return {"error": "Unknown mouse button in buttons: %s (expected one of %s)" % [str(name), str(HELD_MOUSE_BUTTONS)]}
 		mask |= 1 << (int(MOUSE_BUTTONS[str(name)]) - 1)
 	return {"mask": mask}
 
 
 func _mouse_mask_names(mask: int) -> Array[String]:
 	var names: Array[String] = []
-	for name: String in MOUSE_BUTTONS:
+	for name: String in HELD_MOUSE_BUTTONS:
 		if mask & (1 << (int(MOUSE_BUTTONS[name]) - 1)):
 			names.append(name)
 	return names

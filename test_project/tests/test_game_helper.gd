@@ -310,6 +310,23 @@ func test_input_mouse_buttons_param_rejects_unknown_names() -> void:
 	_reset_mouse_state()
 
 
+func test_input_mouse_wheel_step_is_not_held() -> void:
+	## A wheel step is an impulse: callers send it once with pressed=true, so
+	## it must not leave later motion looking like a drag.
+	_reset_mouse_state()
+	var wheel: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "position": [3, 3], "button": "wheel_up", "pressed": true})
+	assert_eq(wheel.input.button_index, MOUSE_BUTTON_WHEEL_UP)
+	assert_eq(wheel.input.button_mask, 1 << (MOUSE_BUTTON_WHEEL_UP - 1), "the step itself carries its bit")
+	assert_eq(wheel.reply.buttons, [])
+	assert_eq(_helper.get("_mouse_button_mask"), 0, "a wheel step does not join the held set")
+	var hover: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [4, 3]})
+	assert_eq(hover.input.button_mask, 0, "motion after a wheel step is a plain hover")
+	var bad: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [5, 3], "buttons": ["wheel_down"]})
+	assert_false(bad.has("input"), "a wheel cannot be held through buttons")
+	assert_contains(bad.reply.error, "wheel_down")
+	_reset_mouse_state()
+
+
 func test_input_mouse_invalid_event_sends_nothing() -> void:
 	var bad: Dictionary = _helper.call("_build_mouse_event", {"event": "scroll"})
 	assert_false(bad.has("input"))
