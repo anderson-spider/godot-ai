@@ -230,7 +230,7 @@ Calls take the form:
 | Tool | Ops |
 |------|-----|
 | `scene_manage` | `create`, `save_as`, `get_roots` |
-| `node_manage` | `get_children`, `get_groups`, `delete`, `duplicate`, `rename`, `move`, `reparent`, `add_to_group`, `remove_from_group` |
+| `node_manage` | `get_children`, `get_groups`, `delete`, `duplicate`, `duplicate_grid`, `rename`, `move`, `reparent`, `add_to_group`, `remove_from_group` |
 | `script_manage` | `read`, `detach`, `find_symbols` (`.gd` and `.cs`) |
 | `project_manage` | `stop`, `settings_get`, `settings_set`, `set_main_scene` |
 | `editor_manage` | `state`, `selection_get`, `selection_set`, `monitors_get`, `quit`, `logs_clear`, `game_eval`, `compare_images` |

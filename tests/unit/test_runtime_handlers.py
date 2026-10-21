@@ -2716,6 +2716,44 @@ async def test_node_duplicate_handler():
     assert client.calls[-1]["params"] == {"path": "/Main/Enemy", "name": "Enemy2"}
 
 
+async def test_node_duplicate_grid_handler_sends_only_given_params():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+    await node_handlers.node_duplicate_grid(
+        runtime,
+        path="/Main/Tile",
+        rows=2,
+        columns=3,
+        column_step=[32, 0],
+        row_step=[0, 32],
+    )
+    assert client.calls[-1]["command"] == "duplicate_node_grid"
+    assert client.calls[-1]["params"] == {
+        "path": "/Main/Tile",
+        "rows": 2,
+        "columns": 3,
+        "column_step": [32, 0],
+        "row_step": [0, 32],
+    }
+
+    await node_handlers.node_duplicate_grid(
+        runtime,
+        path="/Main/Tile",
+        columns=4,
+        column_step=[1, 0, 0],
+        name_template="{name}_{col}",
+        scene_file="res://main.tscn",
+    )
+    assert client.calls[-1]["params"] == {
+        "path": "/Main/Tile",
+        "rows": 1,
+        "columns": 4,
+        "column_step": [1, 0, 0],
+        "name_template": "{name}_{col}",
+        "scene_file": "res://main.tscn",
+    }
+
+
 async def test_node_delete_handler_forwards_scene_file():
     client = StubClient()
     runtime = DirectRuntime(registry=SessionRegistry(), client=client)

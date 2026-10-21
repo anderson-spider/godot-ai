@@ -514,6 +514,144 @@ func duplicate_node(params: Dictionary) -> Dictionary:
 	}
 
 
+const DUPLICATE_GRID_MAX_CELLS := 1024
+const DUPLICATE_GRID_DEFAULT_TEMPLATE := "{name}{index}"
+
+
+## Copies a Node2D, Control or Node3D into a rows x columns grid of siblings.
+## The original is cell 0 and stays where it is; cell (row, col) sits at the
+## original position + col * column_step + row * row_step. Every name is
+## checked before anything changes, and the copies land after the original in
+## cell order inside one undo action.
+func duplicate_node_grid(params: Dictionary) -> Dictionary:
+	var resolved := _resolve_node(params)
+	if resolved.has("error"):
+		return resolved
+	var node: Node = resolved.node
+	var node_path: String = resolved.path
+	var scene_root: Node = resolved.scene_root
+
+	var root_err := _reject_if_scene_root(node, scene_root, "duplicate")
+	if root_err != null:
+		return root_err
+
+	var dimensions := 3 if node is Node3D else 2
+	if not (node is Node3D or node is Node2D or node is Control):
+		return ErrorCodes.make(ErrorCodes.WRONG_TYPE, "duplicate_grid needs a Node2D, Control or Node3D (got %s)" % node.get_class())
+
+	var rows := int(params.get("rows", 1))
+	var columns := int(params.get("columns", 1))
+	if rows < 1 or columns < 1:
+		return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "rows and columns must be at least 1 (got %d x %d)" % [rows, columns])
+	var cells := rows * columns
+	if cells < 2:
+		return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "A 1 x 1 grid is the original alone; ask for more rows or columns")
+	if cells > DUPLICATE_GRID_MAX_CELLS:
+		return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "%d x %d is %d cells; the limit is %d" % [rows, columns, cells, DUPLICATE_GRID_MAX_CELLS])
+
+	var steps := {}
+	for key in ["column_step", "row_step"]:
+		var count := columns if key == "column_step" else rows
+		if count < 2:
+			steps[key] = Vector3.ZERO
+			continue
+		if params.get(key) == null:
+			return ErrorCodes.make(ErrorCodes.MISSING_REQUIRED_PARAM, "Missing required param: %s" % key)
+		var parsed := _grid_step(params[key], dimensions)
+		if parsed.has("error"):
+			return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "%s: %s" % [key, parsed.error])
+		steps[key] = parsed.step
+
+	var template: String = str(params.get("name_template", ""))
+	if template.is_empty():
+		template = DUPLICATE_GRID_DEFAULT_TEMPLATE
+	if not ("{index}" in template or ("{row}" in template and "{col}" in template)):
+		return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "name_template must hold {index}, or both {row} and {col}, so every cell gets its own name (got %s)" % template)
+
+	var parent := node.get_parent()
+	var taken := {}
+	for sibling in parent.get_children():
+		if sibling != node:
+			taken[String(sibling.name)] = true
+	var names: Array[String] = []
+	for index in range(1, cells):
+		var cell_name := template.format({"name": String(node.name), "index": index, "row": floori(float(index) / columns), "col": index % columns})
+		if cell_name.validate_node_name() != cell_name:
+			return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "Invalid characters in generated name: %s" % cell_name)
+		if cell_name == String(node.name) or taken.has(cell_name):
+			return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "Generated name '%s' (cell %d) is already taken under %s; nothing was changed" % [cell_name, index, McpScenePath.from_node(parent, scene_root)])
+		taken[cell_name] = true
+		names.append(cell_name)
+
+	var origin: Variant = node.position
+	var copies: Array[Node] = []
+	for index in range(1, cells):
+		var dup: Node = node.duplicate()
+		if dup == null:
+			for made in copies:
+				made.free()
+			return ErrorCodes.make(ErrorCodes.INTERNAL_ERROR, "Failed to duplicate node")
+		dup.name = names[index - 1]
+		var offset: Vector3 = steps.column_step * float(index % columns) + steps.row_step * float(floori(float(index) / columns))
+		dup.position = origin + (offset if dimensions == 3 else Vector2(offset.x, offset.y))
+		copies.append(dup)
+
+	## Same ownership rule as duplicate_node: only the nodes duplicate() left
+	## unowned join the edited scene; an instanced sub-scene keeps its own.
+	_undo_redo.create_action("MCP: Duplicate %s into a %d x %d grid" % [node.name, rows, columns])
+	var previous := node
+	for dup in copies:
+		_undo_redo.add_do_method(previous, "add_sibling", dup, true)
+		_undo_redo.add_do_method(dup, "set_owner", scene_root)
+		for child in _collect_descendants(dup).filter(func(child: Node) -> bool: return child.owner == null):
+			_undo_redo.add_do_method(child, "set_owner", scene_root)
+		_undo_redo.add_do_reference(dup)
+		previous = dup
+	for i in range(copies.size() - 1, -1, -1):
+		_undo_redo.add_undo_method(parent, "remove_child", copies[i])
+	_undo_redo.commit_action()
+
+	var created: Array[Dictionary] = []
+	for index in range(1, cells):
+		var dup := copies[index - 1]
+		created.append({
+			"path": McpScenePath.from_node(dup, scene_root),
+			"row": floori(float(index) / columns),
+			"col": index % columns,
+			"position": _serialize_value(dup.position),
+		})
+	return {
+		"data": {
+			"original_path": node_path,
+			"rows": rows,
+			"columns": columns,
+			"type": node.get_class(),
+			"created": created,
+			"count": created.size(),
+			"undoable": true,
+		}
+	}
+
+
+## Parse a grid step: a list or {x, y[, z]} with `dimensions` numbers.
+## Returns {step: Vector3} (z is 0 for 2D) or {error}.
+static func _grid_step(value: Variant, dimensions: int) -> Dictionary:
+	var parts: Array = []
+	if value is Array:
+		parts = value
+	elif value is Dictionary:
+		for key in ["x", "y", "z"].slice(0, dimensions):
+			if not (value as Dictionary).has(key):
+				return {"error": "expected keys x, y%s (got %s)" % [", z" if dimensions == 3 else "", str((value as Dictionary).keys())]}
+			parts.append(value[key])
+	if parts.size() != dimensions:
+		return {"error": "expected %d numbers for this node (got %s)" % [dimensions, str(value)]}
+	for part in parts:
+		if not (typeof(part) in [TYPE_INT, TYPE_FLOAT]):
+			return {"error": "expected numbers (got %s)" % str(value)}
+	return {"step": Vector3(parts[0], parts[1], parts[2] if dimensions == 3 else 0.0)}
+
+
 func move_node(params: Dictionary) -> Dictionary:
 	var resolved := _resolve_node(params)
 	if resolved.has("error"):

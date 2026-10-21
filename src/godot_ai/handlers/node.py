@@ -121,6 +121,27 @@ async def node_duplicate(
     )
 
 
+async def node_duplicate_grid(
+    runtime: DirectRuntime,
+    path: str,
+    rows: int = 1,
+    columns: int = 1,
+    column_step: list[float] | dict | None = None,
+    row_step: list[float] | dict | None = None,
+    name_template: str = "",
+    scene_file: str = "",
+) -> dict:
+    await require_writable_async(runtime)
+    params = _mutation_params(scene_file, path=path, rows=rows, columns=columns)
+    if column_step is not None:
+        params["column_step"] = column_step
+    if row_step is not None:
+        params["row_step"] = row_step
+    if name_template:
+        params["name_template"] = name_template
+    return await runtime.send_command("duplicate_node_grid", params)
+
+
 async def node_move(runtime: DirectRuntime, path: str, index: int, scene_file: str = "") -> dict:
     await require_writable_async(runtime)
     return await runtime.send_command(

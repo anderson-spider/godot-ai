@@ -1,7 +1,7 @@
 """MCP tools for node creation and manipulation.
 
 Top-level: ``node_get_properties`` (core), ``node_create``, ``node_set_property``,
-``node_find``. Everything else (delete, duplicate, rename, move, reparent,
+``node_find``. Everything else (delete, duplicate, duplicate_grid, rename, move, reparent,
 get_children, get_groups, add_to_group, remove_from_group) collapses into
 ``node_manage``.
 """
@@ -32,6 +32,14 @@ Ops:
         Remove the node. Cannot delete scene root. Undoable.
   • duplicate(path, name="", scene_file="")
         Deep-copy a node + children as a sibling. Cannot duplicate scene root.
+  • duplicate_grid(path, rows=1, columns=1, column_step=None, row_step=None,
+                 name_template="{name}{index}", scene_file="")
+        Copy a Node2D, Control or Node3D into a rows x columns grid of
+        siblings. The original is cell 0; cell (row, col) sits at its position
+        + col*column_step + row*row_step (steps are [x, y] or [x, y, z] to
+        match the node). name_template takes {name}, {index}, {row}, {col}.
+        Max 1024 cells. A name collision refuses before any change. One undo
+        action; returns each copy's path, row, col and position.
   • rename(path, new_name, scene_file="")
         Rename a node. Sibling-name collision and "/" / ":" / "@" rules apply.
   • move(path, index, scene_file="")
@@ -229,6 +237,7 @@ def register_node_tools(mcp: FastMCP, *, include_non_core: bool = True) -> None:
             "get_groups": node_handlers.node_get_groups,
             "delete": node_handlers.node_delete,
             "duplicate": node_handlers.node_duplicate,
+            "duplicate_grid": node_handlers.node_duplicate_grid,
             "rename": node_handlers.node_rename,
             "move": node_handlers.node_move,
             "reparent": node_handlers.node_reparent,

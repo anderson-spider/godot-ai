@@ -1909,6 +1909,117 @@ func test_duplicate_instanced_scene_keeps_inner_nodes_in_the_instance() -> void:
 	DirAccess.remove_absolute(tmp_path)
 
 
+# ----- duplicate_node_grid -----
+
+func _grid_source(type: String, name: String, position: Variant) -> Node:
+	var created := _handler.create_node({"type": type, "name": name})
+	assert_has_key(created, "data")
+	var node: Node = EditorInterface.get_edited_scene_root().get_node_or_null(name)
+	if node != null:
+		node.position = position
+	return node
+
+
+func test_duplicate_grid_places_2d_copies_by_step_in_one_undo() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	var source := _grid_source("Node2D", "_McpGridTile", Vector2(10, 20))
+	if source == null:
+		return
+	var children_before := scene_root.get_child_count()
+
+	var result := _handler.duplicate_node_grid({
+		"path": "/Main/_McpGridTile",
+		"rows": 2,
+		"columns": 3,
+		"column_step": [32, 0],
+		"row_step": [0, 16],
+	})
+	assert_has_key(result, "data")
+	assert_eq(result.data.count, 5, "the original is cell 0")
+	assert_true(result.data.undoable)
+	assert_eq(scene_root.get_child_count(), children_before + 5)
+	var expected := {
+		"_McpGridTile1": Vector2(42, 20), "_McpGridTile2": Vector2(74, 20),
+		"_McpGridTile3": Vector2(10, 36), "_McpGridTile4": Vector2(42, 36), "_McpGridTile5": Vector2(74, 36),
+	}
+	var order := source.get_index()
+	for cell_name: String in expected:
+		var cell: Node2D = scene_root.get_node_or_null(cell_name)
+		assert_ne(cell, null, "%s exists" % cell_name)
+		if cell != null:
+			assert_eq(cell.position, expected[cell_name], "%s position" % cell_name)
+			assert_eq(cell.owner, scene_root, "%s belongs to the edited scene" % cell_name)
+			order += 1
+			assert_eq(cell.get_index(), order, "%s follows the original in cell order" % cell_name)
+	assert_eq(result.data.created[3], {"path": "/Main/_McpGridTile4", "row": 1, "col": 1, "position": {"x": 42.0, "y": 36.0}})
+	assert_eq(source.position, Vector2(10, 20), "the original does not move")
+
+	assert_true(editor_undo(_undo_redo), "one undo removes the whole grid")
+	assert_eq(scene_root.get_child_count(), children_before)
+	assert_true(editor_redo(_undo_redo), "redo restores the grid")
+	assert_eq((scene_root.get_node_or_null("_McpGridTile5") as Node2D).position, Vector2(74, 36))
+	assert_true(editor_undo(_undo_redo), "undo grid")
+	assert_true(editor_undo(_undo_redo), "undo source")
+
+
+func test_duplicate_grid_3d_with_row_col_template() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if _grid_source("Node3D", "_McpGridBox", Vector3(1, 2, 3)) == null:
+		return
+	var result := _handler.duplicate_node_grid({
+		"path": "/Main/_McpGridBox",
+		"rows": 2,
+		"columns": 2,
+		"column_step": {"x": 2, "y": 0, "z": 0},
+		"row_step": [0, 0, -4],
+		"name_template": "{name}_r{row}c{col}",
+	})
+	assert_has_key(result, "data")
+	var cell: Node3D = scene_root.get_node_or_null("_McpGridBox_r1c1")
+	assert_ne(cell, null, "template names by row and column")
+	if cell != null:
+		assert_eq(cell.position, Vector3(3, 2, -1))
+	assert_ne(scene_root.get_node_or_null("_McpGridBox_r0c1"), null)
+	assert_true(editor_undo(_undo_redo), "undo grid")
+	assert_true(editor_undo(_undo_redo), "undo source")
+
+
+func test_duplicate_grid_refuses_a_name_collision_before_changing_anything() -> void:
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if _grid_source("Node2D", "_McpGridClash", Vector2.ZERO) == null:
+		return
+	assert_has_key(_handler.create_node({"type": "Node2D", "name": "_McpGridClash2"}), "data")
+	var children_before := scene_root.get_child_count()
+	var result := _handler.duplicate_node_grid({
+		"path": "/Main/_McpGridClash",
+		"columns": 3,
+		"column_step": [8, 0],
+	})
+	assert_is_error(result, ErrorCodes.VALUE_OUT_OF_RANGE)
+	assert_contains(result.error.message, "_McpGridClash2")
+	assert_eq(scene_root.get_child_count(), children_before, "nothing was added")
+	assert_eq(scene_root.get_node_or_null("_McpGridClash1"), null, "no partial grid")
+	assert_true(editor_undo(_undo_redo), "undo second node")
+	assert_true(editor_undo(_undo_redo), "undo source")
+
+
+func test_duplicate_grid_rejects_bad_params() -> void:
+	if _grid_source("Node2D", "_McpGridBad", Vector2.ZERO) == null:
+		return
+	var path := "/Main/_McpGridBad"
+	assert_is_error(_handler.duplicate_node_grid({"path": path, "columns": 2}), ErrorCodes.MISSING_REQUIRED_PARAM)
+	assert_is_error(_handler.duplicate_node_grid({"path": path, "columns": 2, "column_step": [1, 2, 3]}), ErrorCodes.VALUE_OUT_OF_RANGE)
+	assert_is_error(_handler.duplicate_node_grid({"path": path, "columns": 2, "column_step": ["a", 1]}), ErrorCodes.VALUE_OUT_OF_RANGE)
+	assert_is_error(_handler.duplicate_node_grid({"path": path, "rows": 33, "columns": 32, "column_step": [1, 0], "row_step": [0, 1]}), ErrorCodes.VALUE_OUT_OF_RANGE)
+	assert_is_error(_handler.duplicate_node_grid({"path": path}), ErrorCodes.VALUE_OUT_OF_RANGE)
+	assert_is_error(_handler.duplicate_node_grid({"path": path, "columns": 2, "column_step": [1, 0], "name_template": "{name}"}), ErrorCodes.VALUE_OUT_OF_RANGE)
+	assert_is_error(_handler.duplicate_node_grid({"path": "/Main", "columns": 2, "column_step": [1, 0, 0]}))
+	assert_true(editor_undo(_undo_redo), "undo source")
+	assert_has_key(_handler.create_node({"type": "Node", "name": "_McpGridPlain"}), "data")
+	assert_is_error(_handler.duplicate_node_grid({"path": "/Main/_McpGridPlain", "columns": 2, "column_step": [1, 0]}), ErrorCodes.WRONG_TYPE)
+	assert_true(editor_undo(_undo_redo), "undo plain node")
+
+
 # ----- move_node -----
 
 func test_move_node_scene_root() -> void:
