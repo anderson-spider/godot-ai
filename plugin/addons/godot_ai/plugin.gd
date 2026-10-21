@@ -408,6 +408,7 @@ func _continue_enter_tree_after_update_barrier() -> void:
 	_dispatcher.register_lazy("get_logs", "editor", &"get_logs")
 	_dispatcher.register_lazy("clear_logs", "editor", &"clear_logs")
 	_dispatcher.register_lazy("take_screenshot", "editor", &"take_screenshot")
+	_dispatcher.register_lazy("compare_images", "editor", &"compare_images")
 	_dispatcher.register_lazy("get_performance_monitors", "editor", &"get_performance_monitors")
 	_dispatcher.register_lazy("reload_plugin", "editor", &"reload_plugin")
 	_dispatcher.register_lazy("quit_editor", "editor", &"quit_editor")

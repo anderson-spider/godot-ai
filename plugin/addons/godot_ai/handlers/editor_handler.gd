@@ -419,9 +419,82 @@ func take_screenshot(params: Dictionary) -> Dictionary:
 	## key, or non-image results keep the original behavior. The single source
 	## of truth for the `match source:` dispatch lives in _take_screenshot_impl
 	## (pinned by tests/unit/test_docs_screenshot_sources.py).
+	var save_to := str(params.get("save_to", ""))
+	if not save_to.is_empty():
+		var save_error := McpImageCompare.png_write_error(save_to)
+		if not save_error.is_empty():
+			return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "save_to: %s" % save_error)
+		if bool(params.get("coverage", false)):
+			return ErrorCodes.make(ErrorCodes.INVALID_PARAMS, "save_to cannot be combined with coverage, which returns several images")
 	if _vision_routing != null and _vision_routing.is_routing_enabled():
-		return _vision_routing.route_editor_screenshot(params, Callable(self, "_take_screenshot_impl"), _connection)
-	return _take_screenshot_impl(params)
+		return _vision_routing.route_editor_screenshot(params, Callable(self, "_take_and_save_screenshot"), _connection)
+	return _take_and_save_screenshot(params)
+
+
+## Capture, then write the PNG the reply carries to `save_to` when asked. A
+## game capture replies later through the debugger plugin, which saves there.
+func _take_and_save_screenshot(params: Dictionary) -> Dictionary:
+	var result := _take_screenshot_impl(params)
+	var save_to := str(params.get("save_to", ""))
+	var data: Variant = result.get("data")
+	if save_to.is_empty() or not (data is Dictionary) or not (data as Dictionary).has("image_base64"):
+		return result
+	var save_error := McpImageCompare.save_png_bytes(Marshalls.base64_to_raw(str(data.image_base64)), save_to)
+	if not save_error.is_empty():
+		return ErrorCodes.make(ErrorCodes.INTERNAL_ERROR, "Captured, but could not save: %s" % save_error)
+	data["saved_to"] = save_to
+	return result
+
+
+## Compare two PNG captures pixel by pixel (see McpImageCompare.compare):
+## counts, bounding box and largest channel difference, optionally limited to a
+## region, with rectangles ignored, a mask, a tolerance, and a diff image
+## written to `diff_to`.
+func compare_images(params: Dictionary) -> Dictionary:
+	var loaded := {}
+	for key in ["a", "b"]:
+		var path := str(params.get(key, ""))
+		if path.is_empty():
+			return ErrorCodes.make(ErrorCodes.MISSING_REQUIRED_PARAM, "Missing required param: %s" % key)
+		var image := McpImageCompare.load_png(path)
+		if image.has("error"):
+			return _image_load_error(key, str(image.error))
+		loaded[key] = image.image
+	var options := {
+		"region": params.get("region"),
+		"ignore": params.get("ignore", []),
+		"tolerance": params.get("tolerance", 0),
+	}
+	var mask_path := str(params.get("mask", ""))
+	if not mask_path.is_empty():
+		var mask := McpImageCompare.load_png(mask_path)
+		if mask.has("error"):
+			return _image_load_error("mask", str(mask.error))
+		options["mask"] = mask.image
+	var diff_to := str(params.get("diff_to", ""))
+	if not diff_to.is_empty():
+		var diff_error := McpImageCompare.png_write_error(diff_to)
+		if not diff_error.is_empty():
+			return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "diff_to: %s" % diff_error)
+		options["diff"] = true
+	var result := McpImageCompare.compare(loaded.a, loaded.b, options)
+	if result.has("error"):
+		return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, str(result.error))
+	if result.has("diff_image"):
+		var diff_image: Image = result.diff_image
+		result.erase("diff_image")
+		var write_error := McpImageCompare.save_png_bytes(diff_image.save_png_to_buffer(), diff_to)
+		if not write_error.is_empty():
+			return ErrorCodes.make(ErrorCodes.INTERNAL_ERROR, "Compared, but could not save the diff: %s" % write_error)
+		result["diff_saved_to"] = diff_to
+	result["a"] = str(params.a)
+	result["b"] = str(params.b)
+	return {"data": result}
+
+
+func _image_load_error(param: String, message: String) -> Dictionary:
+	var code := ErrorCodes.RESOURCE_NOT_FOUND if message.begins_with("File not found") else ErrorCodes.VALUE_OUT_OF_RANGE
+	return ErrorCodes.make(code, "%s: %s" % [param, message])
 
 
 func _take_screenshot_impl(params: Dictionary) -> Dictionary:
@@ -471,7 +544,7 @@ func _take_screenshot_impl(params: Dictionary) -> Dictionary:
 			var request_id: String = params.get("_request_id", "")
 			if request_id.is_empty():
 				return ErrorCodes.make(ErrorCodes.INTERNAL_ERROR, "Missing request_id — cannot correlate deferred response")
-			_debugger_plugin.request_game_screenshot(request_id, max_resolution, _connection)
+			_debugger_plugin.request_game_screenshot(request_id, max_resolution, _connection, McpDebuggerPlugin.DEFAULT_TIMEOUT_SEC, str(params.get("save_to", "")))
 			return McpDispatcher.DEFERRED_RESPONSE
 		"cinematic":
 			return _take_cinematic_screenshot(max_resolution)

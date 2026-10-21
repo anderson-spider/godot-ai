@@ -925,6 +925,7 @@ func request_game_screenshot(
 	max_resolution: int,
 	connection: McpConnection,
 	timeout_sec: float = DEFAULT_TIMEOUT_SEC,
+	save_to: String = "",
 ) -> void:
 	if request_id.is_empty():
 		push_warning("MCP debugger: screenshot request missing request_id")
@@ -937,7 +938,7 @@ func request_game_screenshot(
 		return
 
 	if is_game_capture_ready():
-		_send_take_screenshot(tree, request_id, max_resolution, connection, timeout_sec)
+		_send_take_screenshot(tree, request_id, max_resolution, connection, timeout_sec, save_to)
 		return
 
 	## Not ready yet — run the wait-then-send flow as a detached
@@ -946,7 +947,7 @@ func request_game_screenshot(
 	## await this entrypoint.
 	if _log_buffer:
 		_log_buffer.log("[debug] waiting for game_helper hello (%s)" % request_id)
-	_wait_then_send(tree, request_id, max_resolution, connection, timeout_sec)
+	_wait_then_send(tree, request_id, max_resolution, connection, timeout_sec, save_to)
 
 
 ## Coroutine: poll each editor frame until the mcp:hello beacon arrives
@@ -958,15 +959,16 @@ func _wait_then_send(
 	max_resolution: int,
 	connection: McpConnection,
 	timeout_sec: float,
+	save_to: String,
 ) -> void:
 	var work := ScriptWork.begin("game_screenshot_ready")
-	await _settle_capture_ready(tree, request_id, max_resolution, connection, timeout_sec)
+	await _settle_capture_ready(tree, request_id, max_resolution, connection, timeout_sec, save_to)
 	ScriptWork.finish(work)
 
 
 func _settle_capture_ready(
 	tree: SceneTree, request_id: String, max_resolution: int,
-	connection: McpConnection, timeout_sec: float,
+	connection: McpConnection, timeout_sec: float, save_to: String,
 ) -> void:
 	var deadline := Time.get_ticks_msec() + int(GAME_READY_WAIT_SEC * 1000.0)
 	## #645: always yield at least one frame — the dispatcher registers the
@@ -981,7 +983,7 @@ func _settle_capture_ready(
 		_send_error_response(connection, request_id,
 			_explain_not_live(get_game_status(-1, GAME_READY_WAIT_SEC), ErrorCodes.INTERNAL_ERROR))
 		return
-	_send_take_screenshot(tree, request_id, max_resolution, connection, timeout_sec)
+	_send_take_screenshot(tree, request_id, max_resolution, connection, timeout_sec, save_to)
 
 
 ## Send the mcp:take_screenshot message and arm the reply timeout.
@@ -992,6 +994,7 @@ func _send_take_screenshot(
 	max_resolution: int,
 	connection: McpConnection,
 	timeout_sec: float,
+	save_to: String = "",
 ) -> void:
 	var session: EditorDebuggerSession = _first_active_session()
 	if session == null:
@@ -1006,6 +1009,7 @@ func _send_take_screenshot(
 		"connection": connection,
 		"timer": timer,
 		"timeout_callable": timeout_callable,
+		"save_to": save_to,
 	}
 
 	session.send_message("mcp:take_screenshot", [request_id, max_resolution])
@@ -1055,6 +1059,13 @@ func _on_screenshot_response(data: Array) -> void:
 			payload["note"] = ("The game window appears backgrounded or its main loop is "
 				+ "stalled; returning the last rendered frame. Focus the game window and "
 				+ "retry for a current frame.")
+	var save_to := str(pending.get("save_to", ""))
+	if not save_to.is_empty():
+		var save_error := McpImageCompare.save_png_bytes(Marshalls.base64_to_raw(str(data[1])), save_to)
+		if not save_error.is_empty():
+			_send_error(connection, request_id, ErrorCodes.INTERNAL_ERROR, "Captured, but could not save: %s" % save_error)
+			return
+		payload["saved_to"] = save_to
 	## Vision Routing: when enabled, describe the frame through the configured
 	## vision provider on a
 	## worker thread and reply with the text description instead of the raw

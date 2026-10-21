@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+from typing import Any
 
 from mcp.types import TextContent
 
@@ -86,6 +87,7 @@ async def editor_screenshot(
     azimuth: float | None = None,
     fov: float | None = None,
     user_prompt: str = "",
+    save_to: str = "",
 ) -> dict | list:
     params: dict = {"source": source}
     if max_resolution > 0:
@@ -102,6 +104,8 @@ async def editor_screenshot(
         params["fov"] = fov
     if user_prompt:
         params["user_prompt"] = user_prompt
+    if save_to:
+        params["save_to"] = save_to
 
     timeout = GAME_SCREENSHOT_TIMEOUT_SEC if source == "game" else SCREENSHOT_TIMEOUT_SEC
     result = await runtime.send_command(
@@ -183,6 +187,7 @@ async def editor_screenshot(
         # rides here so text-only models can read it (docs/vision-routing.md).
         "vision_description",
         "routed_via",
+        "saved_to",
     ):
         if key in result:
             metadata[key] = result[key]
@@ -214,6 +219,28 @@ async def performance_monitors_get(
     if monitors:
         params["monitors"] = monitors
     return await runtime.send_command("get_performance_monitors", params)
+
+
+async def compare_images(
+    runtime: DirectRuntime,
+    a: str,
+    b: str,
+    region: dict[str, Any] | None = None,
+    ignore: list[dict[str, Any]] | None = None,
+    mask: str = "",
+    tolerance: int = 0,
+    diff_to: str = "",
+) -> dict:
+    params: dict[str, Any] = {"a": a, "b": b, "tolerance": tolerance}
+    if region is not None:
+        params["region"] = region
+    if ignore:
+        params["ignore"] = ignore
+    if mask:
+        params["mask"] = mask
+    if diff_to:
+        params["diff_to"] = diff_to
+    return await runtime.send_command("compare_images", params)
 
 
 async def logs_clear(runtime: DirectRuntime, clear_debugger_errors: bool = False) -> dict:

@@ -15,7 +15,8 @@ from godot_ai.tools import DEFER_META
 from godot_ai.tools._meta_tool import register_manage_tool
 
 _DESCRIPTION = """\
-Editor selection, performance monitors, quit, log clearing, game eval.
+Editor selection, performance monitors, quit, log clearing, game eval,
+screenshot image comparison (pixel diff).
 
 Resource forms (prefer for active-session reads):
   godot://editor/state, godot://selection/current, godot://performance
@@ -48,7 +49,18 @@ Ops:
         or its debugger session closed; EVAL_HUNG for a live game's genuine
         infinite loop / never-firing await; EVAL_RESULT_TOO_LARGE if the
         returned value serializes past the debugger channel's capacity
-        (return a smaller slice)."""
+        (return a smaller slice).
+  • compare_images(a, b, region=None, ignore=None, mask="", tolerance=0,
+                   diff_to="")
+        Pixel-diff two PNG screenshots of the same size (res:// or user://,
+        e.g. ones saved with editor_screenshot(save_to=...)). Returns
+        compared_pixels, different_pixels, different_ratio, identical, the
+        bbox {x, y, width, height} of the changed pixels and
+        max_channel_delta. region {x, y, width, height} limits the check;
+        ignore is a list of such rects left out (animated areas); mask is a
+        PNG whose opaque pixels are the ones compared; tolerance (0-255) is
+        the per-channel change still counted as equal; diff_to writes a PNG
+        with the changed pixels in red over the dimmed second image."""
 
 
 def register_editor_tools(mcp: FastMCP, *, include_non_core: bool = True) -> None:
@@ -187,6 +199,7 @@ def register_editor_tools(mcp: FastMCP, *, include_non_core: bool = True) -> Non
         azimuth: float | None = None,
         fov: float | None = None,
         user_prompt: str = "",
+        save_to: str = "",
         session_id: str = "",
     ):
         """Capture a screenshot of the Godot editor viewport or running game.
@@ -221,6 +234,10 @@ def register_editor_tools(mcp: FastMCP, *, include_non_core: bool = True) -> Non
         ``view_target`` (comma-separated Node3D paths) reframes editor camera;
         AABB metadata always returned. ``coverage=True`` with view_target
         captures perspective + orthographic top-down references.
+        ``save_to`` writes the returned PNG (at ``max_resolution``; pass 0 for
+        full resolution) to a ``user://`` or ``res://`` .png path, reported
+        as ``saved_to``; compare two saved captures with
+        ``editor_manage(op="compare_images")``. Not with ``coverage``.
 
         Args:
             source: "viewport" | "viewport_2d" | "cinematic" | "game". Default "viewport".
@@ -235,6 +252,7 @@ def register_editor_tools(mcp: FastMCP, *, include_non_core: bool = True) -> Non
                 capture. With Vision Routing enabled it is sent alongside the
                 image so the vision model can describe what the agent is
                 looking for.
+            save_to: Optional user:// or res:// .png path to write the capture to.
             session_id: Optional Godot session to target. Empty = active session.
         """
         runtime = DirectRuntime.from_context(ctx, session_id=session_id or None)
@@ -249,6 +267,7 @@ def register_editor_tools(mcp: FastMCP, *, include_non_core: bool = True) -> Non
             azimuth=azimuth,
             fov=fov,
             user_prompt=user_prompt,
+            save_to=save_to,
         )
 
     @mcp.tool(meta=DEFER_META)
@@ -291,6 +310,7 @@ def register_editor_tools(mcp: FastMCP, *, include_non_core: bool = True) -> Non
             "quit": editor_handlers.editor_quit,
             "logs_clear": editor_handlers.logs_clear,
             "game_eval": editor_handlers.game_eval,
+            "compare_images": editor_handlers.compare_images,
         },
         read_resource_forms={
             "state": "godot://editor/state",
@@ -302,5 +322,6 @@ def register_editor_tools(mcp: FastMCP, *, include_non_core: bool = True) -> Non
             "quit": None,
             "logs_clear": None,
             "game_eval": None,
+            "compare_images": None,
         },
     )

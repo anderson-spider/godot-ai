@@ -4230,6 +4230,47 @@ async def test_editor_screenshot_handler_without_image():
     assert "image_base64" not in result
 
 
+async def test_editor_screenshot_forwards_save_to_only_when_given():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+    await editor_handlers.editor_screenshot(
+        runtime, include_image=False, save_to="user://shots/a.png"
+    )
+    assert client.calls[-1]["params"]["save_to"] == "user://shots/a.png"
+
+    await editor_handlers.editor_screenshot(runtime, include_image=False)
+    assert "save_to" not in client.calls[-1]["params"]
+
+
+async def test_compare_images_sends_only_given_options():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+    await editor_handlers.compare_images(runtime, a="user://a.png", b="user://b.png")
+    assert client.calls[-1]["command"] == "compare_images"
+    assert client.calls[-1]["params"] == {"a": "user://a.png", "b": "user://b.png", "tolerance": 0}
+
+    region = {"x": 1, "y": 2, "width": 3, "height": 4}
+    await editor_handlers.compare_images(
+        runtime,
+        a="user://a.png",
+        b="user://b.png",
+        region=region,
+        ignore=[region],
+        mask="user://m.png",
+        tolerance=2,
+        diff_to="user://d.png",
+    )
+    assert client.calls[-1]["params"] == {
+        "a": "user://a.png",
+        "b": "user://b.png",
+        "tolerance": 2,
+        "region": region,
+        "ignore": [region],
+        "mask": "user://m.png",
+        "diff_to": "user://d.png",
+    }
+
+
 async def test_editor_screenshot_handler_passes_source():
     client = StubClient()
     runtime = DirectRuntime(registry=SessionRegistry(), client=client)
