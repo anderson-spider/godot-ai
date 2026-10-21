@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any
+from typing import Any, Unpack
 
 import anyio
 import httpx2 as httpx
-import mcp.client.streamable_http as sdk_streamable_http
 from fastmcp import Client, FastMCP
+from fastmcp.client.dependencies import _get_forwardable_http_headers
 from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp.client.transports.base import SessionKwargs, TransportOptions
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.server.providers.proxy import ProxyProvider, ProxyTool
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
 from mcp.types import CONNECTION_CLOSED, INTERNAL_ERROR, CallToolRequestParams, TextContent
 
@@ -277,10 +281,23 @@ def _is_transport_failure(exc: BaseException) -> bool:
         or (
             isinstance(item, MCPError)
             and item.code == CONNECTION_CLOSED
-            and item.message == "SSE stream ended without a response"
+            and _is_sdk_stream_loss_message(item.message)
             and item.data is None
         )
         for item in _exception_chain(exc)
+    )
+
+
+def _is_sdk_stream_loss_message(message: str) -> bool:
+    """The SDK's messages for a response stream that ended before its result.
+
+    mcp 2.3.0 reports an SSE stream the reader rejected (an event over
+    ``ATTACH_MAX_SSE_EVENT_BYTES``, malformed framing) as "SSE stream failed:
+    <reason>"; 2.2.0 reported the same loss as the stream ending. Either way
+    the request may have run, so both stay unknown outcomes, never replays.
+    """
+    return message == "SSE stream ended without a response" or message.startswith(
+        "SSE stream failed: "
     )
 
 
@@ -544,16 +561,55 @@ class AttachRecoveryMiddleware(Middleware):
                 return
 
 
-def _raise_sdk_sse_event_limit() -> None:
-    """Let the SDK's SSE reader accept every result the backend can relay.
+class _AttachHttpTransport(StreamableHttpTransport):
+    """StreamableHttpTransport that lets the SDK read SSE events up to the bridge's cap.
 
-    The SDK constructs ``EventSource(response)`` with no size argument and has
-    no option to pass one, so the bridge rebinds the name it resolves.
+    mcp 2.3.0 takes ``max_sse_event_size`` on ``streamable_http_client``, but
+    fastmcp 4.0.10 calls it with the URL and client only, so every POST, GET
+    and reconnect stream keeps the 1 MiB default (PrefectHQ/fastmcp#5755).
+    ``connect_session`` mirrors fastmcp 4.0.10's for the factory path the
+    bridge always uses and adds that one argument; drop the class once
+    fastmcp forwards the option.
+    ``test_attach_proxy.py::test_fastmcp_connect_session_is_still_the_one_the_bridge_mirrors``
+    fails if the mirrored code changes under a fastmcp upgrade.
     """
 
-    sdk_streamable_http.EventSource = partial(  # type: ignore[assignment]
-        httpx.EventSource, max_event_size=ATTACH_MAX_SSE_EVENT_BYTES
-    )
+    @contextlib.asynccontextmanager
+    async def connect_session(
+        self,
+        *,
+        transport_options: TransportOptions | None = None,
+        **session_kwargs: Unpack[SessionKwargs],
+    ) -> AsyncIterator[ClientSession]:
+        if self.httpx_client_factory is None:
+            raise RuntimeError("the attach bridge transport needs an httpx_client_factory")
+        options = transport_options or TransportOptions()
+        if options.forward_incoming_headers:
+            headers = _get_forwardable_http_headers() | self.headers
+        else:
+            headers = dict(self.headers)
+        timeout: httpx.Timeout | None = None
+        read_timeout_seconds = session_kwargs.get("read_timeout_seconds")
+        if read_timeout_seconds is not None:
+            timeout = httpx.Timeout(30.0, read=read_timeout_seconds)
+        http_client = self.httpx_client_factory(
+            headers=headers,
+            auth=self.auth,
+            follow_redirects=True,  # type: ignore[call-arg]
+            **({"timeout": timeout} if timeout else {}),
+        )
+        self._session_id = None
+        http_client.event_hooks.setdefault("response", []).append(self._capture_session_id)
+        async with (
+            http_client,
+            streamable_http_client(
+                self.url,
+                http_client=http_client,
+                max_sse_event_size=ATTACH_MAX_SSE_EVENT_BYTES,
+            ) as (read_stream, write_stream),
+            options.session_class(read_stream, write_stream, **session_kwargs) as session,
+        ):
+            yield session
 
 
 def create_attach_proxy(
@@ -564,10 +620,8 @@ def create_attach_proxy(
 ) -> FastMCP[Any]:
     """Create a stdio-facing proxy using fresh downstream sessions per request."""
 
-    _raise_sdk_sse_event_limit()
-
     def backend_client() -> Client[Any]:
-        transport = StreamableHttpTransport(
+        transport = _AttachHttpTransport(
             mcp_url,
             httpx_client_factory=partial(_http_client_factory, capability_provider),
         )

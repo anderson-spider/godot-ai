@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
 from dataclasses import replace
 from functools import partial
 from types import SimpleNamespace
@@ -10,6 +12,8 @@ from typing import Any
 
 import httpx2 as httpx
 import pytest
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
 from mcp.shared.exceptions import MCPError
 from mcp.types import CONNECTION_CLOSED, INTERNAL_ERROR, CallToolResult, TextContent, Tool
 
@@ -650,7 +654,7 @@ def test_create_attach_proxy_wires_fresh_client_provider_and_outer_middleware(
     async def observe() -> BackendStatus:
         return _status()
 
-    monkeypatch.setattr(proxy_module, "StreamableHttpTransport", FakeTransport)
+    monkeypatch.setattr(proxy_module, "_AttachHttpTransport", FakeTransport)
     monkeypatch.setattr(proxy_module, "Client", FakeClient)
 
     proxy = create_attach_proxy(
@@ -1123,11 +1127,16 @@ async def test_backend_monitor_counts_observer_exceptions() -> None:
     await middleware._wait_for_backend_change("instance-a")
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "SSE stream ended without a response",
+        "SSE stream failed: Server-sent event exceeded the 8388608 byte limit.",
+    ],
+)
 @pytest.mark.parametrize("wrapped", [False, True])
-async def test_sdk_sse_closure_is_unknown_without_replay(wrapped: bool) -> None:
-    failure: BaseException = MCPError(
-        CONNECTION_CLOSED, "SSE stream ended without a response"
-    )
+async def test_sdk_sse_closure_is_unknown_without_replay(wrapped: bool, message: str) -> None:
+    failure: BaseException = MCPError(CONNECTION_CLOSED, message)
     if wrapped:
         failure = ExceptionGroup("downstream", [failure])
     calls = 0
@@ -1154,6 +1163,8 @@ async def test_sdk_sse_closure_is_unknown_without_replay(wrapped: bool) -> None:
         (CONNECTION_CLOSED, "Application rejected this operation", None),
         (INTERNAL_ERROR, "SSE stream ended without a response", None),
         (CONNECTION_CLOSED, "SSE stream ended without a response", {}),
+        (INTERNAL_ERROR, "SSE stream failed: Server-sent event exceeded the limit.", None),
+        (CONNECTION_CLOSED, "SSE stream failed", None),
     ],
 )
 async def test_application_rpc_error_is_not_transport_loss(
@@ -1178,46 +1189,117 @@ async def test_application_rpc_error_is_not_transport_loss(
     assert calls == 1
 
 
-async def test_bridge_sse_reader_accepts_results_over_one_mebibyte(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A 2 MiB tool result (a large editor_screenshot) must reach the client.
+def _big_result_server(payload: str):
+    """A minimal streamable-HTTP MCP server answering over SSE, for MockTransport."""
 
-    httpx2's default 1 MiB SSE event cap made the SDK report such a result as
-    "SSE stream ended without a response".
-    """
-    sdk = proxy_module.sdk_streamable_http
-    monkeypatch.setattr(sdk, "EventSource", sdk.EventSource)
-    payload = "x" * (2 * 1024 * 1024)
-    body = f'event: message\ndata: {{"blob": "{payload}"}}\n\n'.encode()
-
-    def response() -> httpx.Response:
+    def sse(message: dict[str, Any], request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
-            content=body,
-            request=httpx.Request("POST", "http://127.0.0.1:1/mcp"),
+            content=f"event: message\ndata: {json.dumps(message)}\n\n".encode(),
+            request=request,
         )
 
-    with pytest.raises(httpx.SSEError):
-        async for _ in httpx.EventSource(response()):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(405, request=request)
+        if request.method == "DELETE":
+            return httpx.Response(200, request=request)
+        body = json.loads(request.content)
+        if "id" not in body:
+            return httpx.Response(202, request=request)
+        if body["method"] == "initialize":
+            result: dict[str, Any] = {
+                "protocolVersion": body["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "big-result", "version": "1"},
+            }
+        elif body["method"] == "tools/list":
+            result = {"tools": [{"name": "big", "inputSchema": {"type": "object"}}]}
+        else:
+            result = {"content": [{"type": "text", "text": payload}], "isError": False}
+        return sse({"jsonrpc": "2.0", "id": body["id"], "result": result}, request)
+
+    def factory(
+        headers: dict[str, str] | None = None,
+        auth: httpx.Auth | None = None,
+        follow_redirects: bool = False,
+        **_kwargs: Any,
+    ) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            headers=headers,
+            auth=auth,
+            follow_redirects=follow_redirects,
+        )
+
+    return factory
+
+
+async def test_bridge_transport_reads_results_over_one_mebibyte() -> None:
+    """A 2 MiB tool result (a large editor_screenshot) must reach the client.
+
+    httpx2's default 1 MiB SSE event cap made the SDK report such a result as
+    "SSE stream ended without a response"; the bridge transport raises it.
+    """
+    payload = "x" * (2 * 1024 * 1024)
+    transport = proxy_module._AttachHttpTransport(
+        "http://127.0.0.1:1/mcp", httpx_client_factory=_big_result_server(payload)
+    )
+    async with Client(transport) as client:
+        result = await client.call_tool_mcp("big", {})
+    assert result.content[0].text == payload
+
+
+async def test_plain_fastmcp_transport_still_drops_results_over_one_mebibyte() -> None:
+    """The control for the test above: without the subclass the result is lost."""
+    payload = "x" * (2 * 1024 * 1024)
+    transport = StreamableHttpTransport(
+        "http://127.0.0.1:1/mcp", httpx_client_factory=_big_result_server(payload)
+    )
+    with pytest.raises(MCPError) as caught:
+        async with Client(transport) as client:
+            await client.call_tool_mcp("big", {})
+    assert caught.value.error.code == CONNECTION_CLOSED
+    assert caught.value.error.message.startswith("SSE stream failed: ")
+    assert "1048576 byte limit" in caught.value.error.message
+    ## The bridge classifies this loss as an unknown outcome, never a replay.
+    assert _is_transport_failure(caught.value)
+
+
+def test_bridge_transport_needs_a_client_factory() -> None:
+    transport = proxy_module._AttachHttpTransport("http://127.0.0.1:1/mcp")
+
+    async def connect() -> None:
+        async with transport.connect_session():
             pass
 
-    create_attach_proxy(
-        "http://127.0.0.1:1/mcp",
-        ensure_ready=lambda: asyncio.sleep(0, _status()),
-        observe_backend=lambda: asyncio.sleep(0, _status()),
-        capability_provider=lambda: TEST_HTTP_CAPABILITY,
-    )
-    events = [event async for event in sdk.EventSource(response())]
-
-    assert len(events) == 1
-    assert len(events[0].data) > 2 * 1024 * 1024
+    with pytest.raises(RuntimeError, match="httpx_client_factory"):
+        asyncio.run(connect())
 
 
-def test_sdk_still_builds_its_sse_reader_by_module_name() -> None:
-    """The limit rebinding only works while the SDK calls EventSource(response)."""
-    import inspect
+def test_sdk_still_takes_the_sse_event_size_option() -> None:
+    from mcp.client.streamable_http import streamable_http_client
 
-    source = inspect.getsource(proxy_module.sdk_streamable_http)
-    assert "EventSource(response)" in source
+    assert "max_sse_event_size" in inspect.signature(streamable_http_client).parameters
+
+
+def test_fastmcp_connect_session_is_still_the_one_the_bridge_mirrors() -> None:
+    """_AttachHttpTransport copies fastmcp 4.0.10's connect_session.
+
+    If fastmcp changes it (or starts forwarding max_sse_event_size, which
+    makes the subclass unnecessary), this fails so the copy is revisited
+    instead of drifting silently.
+    """
+    source = inspect.getsource(StreamableHttpTransport.connect_session)
+    for line in (
+        "headers = _get_forwardable_http_headers() | self.headers",
+        "timeout = httpx2.Timeout(30.0, read=read_timeout_seconds)",
+        "http_client = self.httpx_client_factory(",
+        "self._session_id = None",
+        "self._capture_session_id",
+        "streamable_http_client(self.url, http_client=http_client) as (",
+        "options.session_class(",
+    ):
+        assert line in source, line
+    assert "max_sse_event_size" not in source
