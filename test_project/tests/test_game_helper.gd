@@ -327,6 +327,21 @@ func test_input_mouse_wheel_step_is_not_held() -> void:
 	_reset_mouse_state()
 
 
+func test_input_mouse_unknown_button_tracks_the_sent_left() -> void:
+	## An unknown name falls back to left, so the held set must follow the
+	## left event that is actually sent.
+	_reset_mouse_state()
+	var press: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "position": [1, 1], "button": "thumb", "pressed": true})
+	assert_eq(press.input.button_index, MOUSE_BUTTON_LEFT)
+	assert_eq(press.reply.buttons, ["left"])
+	var drag: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [2, 1]})
+	assert_eq(drag.input.button_mask, MOUSE_BUTTON_MASK_LEFT)
+	_helper.call("_build_mouse_event", {"event": "button", "position": [2, 1], "button": "thumb", "pressed": false})
+	var hover: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [3, 1]})
+	assert_eq(hover.input.button_mask, 0, "the fallback release clears the left it pressed")
+	_reset_mouse_state()
+
+
 func test_input_mouse_invalid_event_sends_nothing() -> void:
 	var bad: Dictionary = _helper.call("_build_mouse_event", {"event": "scroll"})
 	assert_false(bad.has("input"))
