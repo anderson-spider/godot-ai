@@ -841,3 +841,17 @@ func test_run_input_sequence_invalid_plan_replies_error() -> void:
 	await helper._run_input_sequence("req-seq-4", {"steps": []})
 	assert_eq(helper._last_game_command_reply.kind, "error",
 		"a plan error must surface as a game_command error")
+
+
+# ----- window_set_size -----
+
+func test_window_set_size_refuses_a_malformed_size_before_resizing() -> void:
+	## Only the refusals run here: a valid size would resize the editor's own
+	## window, which hosts this test run.
+	var helper: GameHelper = _helper
+	for bad: Variant in [null, [800], ["a", 600], [0, 600], {"x": 800, "y": 600}]:
+		await helper._run_window_set_size("req-win", {"size": bad})
+		var reply: Dictionary = helper._last_game_command_reply
+		assert_eq(reply.kind, "error", "size %s is refused" % str(bad))
+		assert_eq(reply.op, "window_set_size")
+		assert_contains(reply.message, "size must be")

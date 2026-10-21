@@ -52,12 +52,15 @@ async def project_run(
     mode: str = "main",
     scene: str = "",
     autosave: bool = True,
+    window_size: list[int] | None = None,
 ) -> dict:
     params: dict[str, Any] = {"mode": mode}
     if scene:
         params["scene"] = scene
     if not autosave:
         params["autosave"] = False
+    if window_size is not None:
+        params["window_size"] = window_size
     await require_writable_async(runtime)
     return await runtime.send_command("run_project", params, timeout=RUN_PROJECT_TIMEOUT_SEC)
 

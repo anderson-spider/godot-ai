@@ -293,6 +293,35 @@ func test_search_filesystem_no_results() -> void:
 
 # ----- run_project -----
 
+func test_parse_run_window_size_accepts_lists_and_objects() -> void:
+	assert_eq(ProjectHandler.parse_run_window_size([1280, 720]).size, Vector2i(1280, 720))
+	assert_eq(ProjectHandler.parse_run_window_size([1280.0, 720.0]).size, Vector2i(1280, 720))
+	assert_eq(ProjectHandler.parse_run_window_size({"x": 800, "y": 600}).size, Vector2i(800, 600))
+	assert_eq(ProjectHandler.parse_run_window_size({"width": 800, "height": 600}).size, Vector2i(800, 600))
+	for bad: Variant in [[800], [800, 600, 1], ["800", 600], [800.5, 600], [32, 600], [800, 20000], "800x600"]:
+		assert_has_key(ProjectHandler.parse_run_window_size(bad), "error", "%s is refused" % str(bad))
+
+
+func test_run_args_with_resolution_lands_where_the_engine_reads_it() -> void:
+	var size := Vector2i(800, 600)
+	assert_eq(ProjectHandler.run_args_with_resolution("", size), "--resolution 800x600")
+	assert_eq(ProjectHandler.run_args_with_resolution("--verbose -- --level=2", size),
+		"--resolution 800x600 --verbose -- --level=2", "ahead of the game's own arguments")
+	assert_eq(ProjectHandler.run_args_with_resolution("prime-run %command% --verbose", size),
+		"prime-run %command% --resolution 800x600 --verbose", "right after a wrapper's placeholder")
+
+
+func test_run_project_rejects_a_bad_window_size_before_playing() -> void:
+	if EditorInterface.is_playing_scene():
+		skip("A game is already running")
+		return
+	var prior_args: Variant = ProjectSettings.get_setting("editor/run/main_run_args", "")
+	var result := _handler.run_project({"window_size": [10, 10]})
+	assert_is_error(result, ErrorCodes.VALUE_OUT_OF_RANGE)
+	assert_false(EditorInterface.is_playing_scene(), "nothing was launched")
+	assert_eq(ProjectSettings.get_setting("editor/run/main_run_args", ""), prior_args, "run arguments untouched")
+
+
 ## NOTE: test_run_project_rejects_when_already_playing removed — it was an
 ## empty test (just `pass`) that requires the project to actually be running,
 ## which can't happen from within the test runner. Covered by Python tests.

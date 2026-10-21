@@ -174,6 +174,13 @@ async def game_input_state(
     return await _game_command(runtime, "input_state", params)
 
 
+async def game_window_set_size(
+    runtime: DirectRuntime,
+    size: list[int],
+) -> dict:
+    return await _game_command(runtime, "window_set_size", {"size": size})
+
+
 def _invalid_params(message: str) -> GodotCommandError:
     return GodotCommandError(code=ErrorCode.INVALID_PARAMS, message=message)
 

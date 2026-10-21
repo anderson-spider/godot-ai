@@ -430,6 +430,10 @@ func _handle_game_command(data: Array) -> void:
 			## screenshot capture paths.
 			_run_input_sequence(request_id, json.data)
 			return
+		"window_set_size":
+			## Async: the size settles a couple of frames after the request.
+			_run_window_set_size(request_id, json.data)
+			return
 		_:
 			_reply_game_command_error(request_id, "Unknown game op: %s" % op)
 			return
@@ -970,6 +974,60 @@ func _actions_pressed_at_end(steps: Array) -> Array:
 		if Input.is_action_pressed(action):
 			pressed.append(action)
 	return pressed
+
+
+const WINDOW_SIZE_SETTLE_FRAMES := 2
+
+
+## Resize the game's main window and report the size it actually took. An
+## embedded game (launched with --wid into the editor's Game view) is sized by
+## the editor, so the request is reported as not applied there; a run with
+## project_run(window_size=...) gets a separate window instead.
+func _run_window_set_size(request_id: String, params: Dictionary) -> void:
+	var size: Variant = params.get("size")
+	if not (size is Array and (size as Array).size() == 2 and typeof(size[0]) in [TYPE_INT, TYPE_FLOAT] and typeof(size[1]) in [TYPE_INT, TYPE_FLOAT]):
+		_reply_window_set_size_error(request_id, "size must be [width, height] (got %s)" % str(size))
+		return
+	var requested := Vector2i(int(size[0]), int(size[1]))
+	if requested.x < 1 or requested.y < 1:
+		_reply_window_set_size_error(request_id, "size must be positive (got %s)" % str(size))
+		return
+	var window := get_tree().root
+	var embedded := is_embedded_run()
+	if not embedded:
+		if window.mode != Window.MODE_WINDOWED:
+			window.mode = Window.MODE_WINDOWED
+		window.size = requested
+	for i in WINDOW_SIZE_SETTLE_FRAMES:
+		if _frame_waiter.is_valid():
+			await _frame_waiter.call()
+		else:
+			await get_tree().process_frame
+	var result := {
+		"requested": [requested.x, requested.y],
+		"actual": [window.size.x, window.size.y],
+		"embedded": embedded,
+		"applied": window.size == requested,
+	}
+	if embedded:
+		result["hint"] = "The editor's Game view sizes an embedded game; run it with project_run(window_size=[w, h]) for a separate window of that size."
+	result["source"] = "game"
+	result["op"] = "window_set_size"
+	_last_game_command_reply = {"kind": "response", "op": "window_set_size", "result": result}
+	if EngineDebugger.is_active():
+		EngineDebugger.send_message("mcp:game_command_response",
+			[request_id, JSON.stringify(_variant_to_json(result))])
+
+
+func _reply_window_set_size_error(request_id: String, message: String) -> void:
+	_last_game_command_reply = {"kind": "error", "op": "window_set_size", "message": message}
+	if EngineDebugger.is_active():
+		EngineDebugger.send_message("mcp:game_command_error", [request_id, message])
+
+
+## True when the editor launched this game into its Game view.
+static func is_embedded_run() -> bool:
+	return OS.get_cmdline_args().has("--wid") or DisplayServer.get_name() == "embedded"
 
 
 func _reply_input_sequence_ok(request_id: String, result: Dictionary) -> void:

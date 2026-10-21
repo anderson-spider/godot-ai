@@ -1982,6 +1982,18 @@ async def test_game_input_state_sends_game_command():
     }
 
 
+async def test_game_window_set_size_sends_game_command():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+
+    await game_handlers.game_window_set_size(runtime, size=[800, 600])
+
+    assert client.calls[-1]["params"] == {
+        "op": "window_set_size",
+        "params": {"size": [800, 600]},
+    }
+
+
 async def test_project_settings_resource_collects_results():
     runtime = DirectRuntime(registry=SessionRegistry(), client=StubClient())
 
@@ -4180,6 +4192,13 @@ async def test_project_run_handler_autosave_false_forwarded():
     runtime = DirectRuntime(registry=SessionRegistry(), client=client)
     await project_handlers.project_run(runtime, mode="current", autosave=False)
     assert client.calls[-1]["params"] == {"mode": "current", "autosave": False}
+
+
+async def test_project_run_handler_forwards_window_size():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+    await project_handlers.project_run(runtime, window_size=[1280, 720])
+    assert client.calls[-1]["params"] == {"mode": "main", "window_size": [1280, 720]}
 
 
 async def test_project_stop_handler():

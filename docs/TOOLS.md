@@ -27,7 +27,7 @@ not the MCP tool names.
 | `node_create` / `node_set_property` / `node_find` | Common node writes + search |
 | `scene_open` / `scene_save` | Open and save scenes |
 | `script_create` / `script_attach` / `script_patch` | Create, attach, anchor-edit script files (GDScript validated; C# text-only, see [C# support](#c-support)) |
-| `project_run` | Play the project, then wait briefly for game liveness (autosave persists in-memory MCP edits unless `autosave=False`) |
+| `project_run` | Play the project, then wait briefly for game liveness (autosave persists in-memory MCP edits unless `autosave=False`; `window_size=[w, h]` runs once in a separate window of that size) |
 | `test_run` | Run GDScript test suites in the editor — see [testing.md](testing.md) for writing suites and the `McpTestSuite` API |
 | `logs_read` | Read plugin / game / editor / combined log buffers. `source="editor"` surfaces parse errors, GDScript reload warnings, @tool/EditorPlugin runtime errors, push_error/push_warning, and visible Debugger dock Errors-tab rows — use this when the editor's Output or Debugger Errors panel shows red/yellow rows |
 | `editor_screenshot` | Capture the editor 3D viewport (`viewport`), editor 2D viewport (`viewport_2d`), cinematic Camera3D render (`cinematic`), or running game framebuffer (`game`). `save_to` writes the PNG to a `user://` or `res://` path for `editor_manage(op="compare_images")`. With Vision Routing enabled, images are replaced by a text description (`vision_description` / `routed_via`) - see [vision-routing.md](vision-routing.md) |
@@ -243,7 +243,7 @@ Calls take the form:
 | `camera_manage` | `create`, `configure`, `set_limits_2d`, `set_damping_2d`, `follow_2d`, `get`, `list`, `apply_preset` |
 | `signal_manage` | `list`, `connect`, `disconnect` |
 | `input_map_manage` | `list`, `add_action`, `ensure_action`, `remove_action`, `bind_event`, `ensure_binding` |
-| `game_manage` | `get_scene_tree`, `get_node_info`, `get_ui_elements`, `suspend`, `resume`, `next_frame`, `debug_status`, `input_key`, `input_mouse`, `input_gamepad`, `input_action`, `input_sequence`, `input_state` |
+| `game_manage` | `get_scene_tree`, `get_node_info`, `get_ui_elements`, `suspend`, `resume`, `next_frame`, `debug_status`, `input_key`, `input_mouse`, `input_gamepad`, `input_action`, `input_sequence`, `input_state`, `window_set_size` |
 | `autoload_manage` | `list`, `add`, `remove` |
 | `filesystem_manage` | `read_text`, `write_text`, `reimport`, `scan`, `search`, `move`, `rename`, `remove` |
 | `theme_manage` | `create`, `set_color`, `set_constant`, `set_font_size`, `set_stylebox_flat`, `set_stylebox_texture`, `set_font`, `set_icon`, `stylebox_override`, `apply` |

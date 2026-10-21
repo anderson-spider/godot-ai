@@ -54,6 +54,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         mode: str = "main",
         scene: str = "",
         autosave: bool = True,
+        window_size: list[int] | None = None,
         session_id: str = "",
     ) -> dict:
         """Run (play) the Godot project from the editor.
@@ -93,11 +94,17 @@ def register_project_tools(mcp: FastMCP) -> None:
             autosave: When True (default), Godot persists in-memory MCP scene
                 mutations to disk before running. Pass False for smoke tests
                 where MCP edits should stay in memory.
+            window_size: [width, height] (64..16384 each) to run this time in a
+                separate window of that size. The editor's Game view drops
+                --resolution and sizes an embedded game to its panel, so this
+                run skips embedding; the Game view's embed choice and the run
+                arguments are restored right after launch, and nothing is
+                saved. The response carries ``window``.
             session_id: Optional Godot session to target. Empty = active session.
         """
         runtime = DirectRuntime.from_context(ctx, session_id=session_id or None)
         return await project_handlers.project_run(
-            runtime, mode=mode, scene=scene, autosave=autosave
+            runtime, mode=mode, scene=scene, autosave=autosave, window_size=window_size
         )
 
     register_manage_tool(

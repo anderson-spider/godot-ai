@@ -261,6 +261,12 @@ func run_project(params: Dictionary) -> Dictionary:
 		validation_error = ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "Invalid mode '%s' — use 'main', 'current', or 'custom'" % mode)
 	if validation_error != null:
 		return validation_error
+	var window_size := Vector2i.ZERO
+	if params.get("window_size") != null:
+		var parsed_size := parse_run_window_size(params.window_size)
+		if parsed_size.has("error"):
+			return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "window_size: %s" % parsed_size.error)
+		window_size = parsed_size.size
 
 	# play_*_scene internally triggers try_autosave() → _save_scene_with_preview()
 	# which renders a preview thumbnail and calls frame processing. If our
@@ -287,6 +293,8 @@ func run_project(params: Dictionary) -> Dictionary:
 	if _debugger_plugin != null:
 		_debugger_plugin.begin_game_run(_editor_log_cursor(), _game_helper_autoload_expected())
 
+	var window_run := _begin_run_window_size(window_size) if window_size != Vector2i.ZERO else {}
+
 	match mode:
 		"main":
 			EditorInterface.play_main_scene()
@@ -296,6 +304,8 @@ func run_project(params: Dictionary) -> Dictionary:
 			var scene_path: String = params.get("scene", "")
 			EditorInterface.play_custom_scene(scene_path)
 
+	if not window_run.is_empty():
+		_end_run_window_size(window_run)
 	if restore_setting:
 		editor_settings.set_setting(autosave_key, prior_autosave)
 
@@ -309,12 +319,132 @@ func run_project(params: Dictionary) -> Dictionary:
 		false,
 		"Play/stop is a runtime action"
 	)
+	if not window_run.is_empty():
+		base_data["window"] = {
+			"requested": [window_size.x, window_size.y],
+			"run_args_found": window_run.args_edit != null,
+			"game_view_found": window_run.embed_found,
+			"embedding_paused_for_run": window_run.embed_was_on,
+		}
 	var request_id: String = params.get("_request_id", "")
 	if _connection != null and _debugger_plugin != null and not request_id.is_empty():
 		_finish_run_project_deferred(request_id, base_data, _connection, _debugger_plugin)
 		return McpDispatcher.DEFERRED_RESPONSE
 
 	return _run_project_current_liveness_response(base_data)
+
+
+## The Run Instances dialog's "Main Run Args" field (editor/run/run_instances_dialog.cpp).
+const MAIN_RUN_ARGS_ACCESSIBILITY_NAME := "Main Run Args:"
+const RUN_WINDOW_MIN := 64
+const RUN_WINDOW_MAX := 16384
+## GameView's "Embed Game on Next Play" menu id (editor/run/game_view_plugin.h).
+const GAME_VIEW_EMBED_ON_PLAY_ID := 6
+const GAME_VIEW_OPTIONS_TOOLTIP := "Game Window Options"
+
+
+## Parse a run window size: [w, h] or {x, y} (also {width, height}) of
+## whole numbers within RUN_WINDOW_MIN..RUN_WINDOW_MAX. Returns {size} or
+## {error}.
+static func parse_run_window_size(value: Variant) -> Dictionary:
+	var parts: Array = []
+	if value is Array:
+		parts = value
+	elif value is Dictionary:
+		var dict: Dictionary = value
+		parts = [dict.get("x", dict.get("width")), dict.get("y", dict.get("height"))]
+	if parts.size() != 2:
+		return {"error": "expected [width, height] (got %s)" % str(value)}
+	for part in parts:
+		if not (typeof(part) in [TYPE_INT, TYPE_FLOAT]) or float(part) != floorf(float(part)):
+			return {"error": "expected whole numbers (got %s)" % str(value)}
+		if int(part) < RUN_WINDOW_MIN or int(part) > RUN_WINDOW_MAX:
+			return {"error": "each side must be %d..%d (got %s)" % [RUN_WINDOW_MIN, RUN_WINDOW_MAX, str(value)]}
+	return {"size": Vector2i(int(parts[0]), int(parts[1]))}
+
+
+## `args` with `--resolution WxH` added where the engine reads it: after a
+## `%command%` wrapper placeholder, else first, so it stays ahead of a `--`
+## that starts the game's own arguments.
+static func run_args_with_resolution(args: String, size: Vector2i) -> String:
+	var flag := "--resolution %dx%d" % [size.x, size.y]
+	var at := args.find("%command%")
+	if at >= 0:
+		var cut := at + "%command%".length()
+		return args.substr(0, cut) + " " + flag + args.substr(cut)
+	return (flag + " " + args).strip_edges()
+
+
+## Point the next play at a separate window of `size`, for that run only.
+## The editor builds the run's arguments from the Run Instances dialog's
+## "Main Run Args" field (refreshed from editor/run/main_run_args only on a
+## deferred signal), so --resolution goes into that field's text; set_text
+## does not fire text_changed, which would save the project. The embedded
+## Game view drops --resolution and sizes the game to its panel, so embedding
+## is switched off through its own menu entry. _end_run_window_size puts both
+## back right after the play call.
+func _begin_run_window_size(size: Vector2i) -> Dictionary:
+	var args_edit := _main_run_args_edit()
+	var prior_args := ""
+	if args_edit != null:
+		prior_args = args_edit.text
+		args_edit.text = run_args_with_resolution(prior_args, size)
+	var menu := _game_view_options_menu()
+	var embed_was_on := false
+	if menu != null:
+		embed_was_on = menu.is_item_checked(menu.get_item_index(GAME_VIEW_EMBED_ON_PLAY_ID))
+		if embed_was_on:
+			menu.id_pressed.emit(GAME_VIEW_EMBED_ON_PLAY_ID)
+	return {
+		"args_edit": args_edit,
+		"prior_args": prior_args,
+		"menu": menu,
+		"embed_found": menu != null,
+		"embed_was_on": embed_was_on,
+	}
+
+
+func _end_run_window_size(state: Dictionary) -> void:
+	var args_edit: LineEdit = state.args_edit
+	if is_instance_valid(args_edit):
+		args_edit.text = state.prior_args
+	var menu: PopupMenu = state.menu
+	if state.embed_was_on and is_instance_valid(menu) and not menu.is_item_checked(menu.get_item_index(GAME_VIEW_EMBED_ON_PLAY_ID)):
+		menu.id_pressed.emit(GAME_VIEW_EMBED_ON_PLAY_ID)
+
+
+## The Run Instances dialog's "Main Run Args" field, or null.
+func _main_run_args_edit() -> LineEdit:
+	var found := _editor_nodes_where(func(node: Node) -> bool: return node is LineEdit and (node as LineEdit).accessibility_name == MAIN_RUN_ARGS_ACCESSIBILITY_NAME)
+	return found[0] as LineEdit if not found.is_empty() else null
+
+
+## The Game view's window-options popup, or null when the editor has no Game
+## view (headless, single-window mode, embedding unsupported).
+func _game_view_options_menu() -> PopupMenu:
+	var buttons := _editor_nodes_where(func(node: Node) -> bool: return node is MenuButton and (node as MenuButton).tooltip_text == GAME_VIEW_OPTIONS_TOOLTIP)
+	for node in buttons:
+		var popup := (node as MenuButton).get_popup()
+		var index := popup.get_item_index(GAME_VIEW_EMBED_ON_PLAY_ID)
+		if index >= 0 and popup.is_item_checkable(index):
+			return popup
+	return null
+
+
+## Every node in the editor's tree, internal ones and dialogs included, for
+## which `predicate` is true.
+static func _editor_nodes_where(predicate: Callable) -> Array[Node]:
+	var found: Array[Node] = []
+	var base := EditorInterface.get_base_control()
+	if base == null or not base.is_inside_tree():
+		return found
+	var pending: Array[Node] = [base.get_tree().root]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		if predicate.call(node):
+			found.append(node)
+		pending.append_array(node.get_children(true))
+	return found
 
 
 func _editor_log_cursor() -> int:

@@ -74,7 +74,13 @@ Ops:
         basis. Action-based input is focus-independent, so it works on a
         backgrounded game window. Cannot run inside batch_execute.
   - input_state(actions=None)
-        Read current action pressed states. Empty actions = all project actions."""
+        Read current action pressed states. Empty actions = all project actions.
+  - window_set_size(size)
+        Resize the running game's window to size=[width, height] and reply,
+        two frames later, with {requested, actual, embedded, applied}. A game
+        embedded in the editor's Game view is sized by the editor, so there
+        the request is not applied (embedded=true); run the game with
+        project_run(window_size=[w, h]) to get a separate window instead."""
 
 
 def register_game_tools(mcp: FastMCP) -> None:
@@ -96,6 +102,7 @@ def register_game_tools(mcp: FastMCP) -> None:
             "input_action": game_handlers.game_input_action,
             "input_sequence": game_handlers.game_input_sequence,
             "input_state": game_handlers.game_input_state,
+            "window_set_size": game_handlers.game_window_set_size,
         },
         read_resource_forms={
             "get_scene_tree": None,
@@ -111,5 +118,6 @@ def register_game_tools(mcp: FastMCP) -> None:
             "input_action": None,
             "input_sequence": None,
             "input_state": None,
+            "window_set_size": None,
         },
     )
