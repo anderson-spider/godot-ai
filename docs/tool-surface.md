@@ -73,3 +73,16 @@ for a script with live instances. The runner itself still does not reload
 dependencies on its own. A filesystem scan or plugin reload is not a
 substitute: a headless editor skips the refresh, and neither orders
 dependents.
+
+**Open risk: a refreshed script can be written back over a newer file.**
+Both refresh paths assign `source_code` on the cached script. In one of four
+GUI-editor attempts on Godot 4.7.2 (load `a.gd`, edit it to v2 outside the
+editor, `script_manage(op="reload")`, edit it to v3 outside the editor), the
+editor wrote the in-memory v2 back over v3 within a few seconds, before any
+save or quit; a loaded control script edited the same way without a reload
+kept v3. The other three attempts, and a forced `save_all_scenes()`, kept v3,
+so the trigger is unconfirmed (possibly a race with the editor's filesystem
+scan right after launch). Until it is understood, call
+`script_manage(op="reload")` again after every outside edit of a loaded
+script, so the in-memory copy never lags the file, and check the file before
+trusting it after an editor session that refreshed scripts.
