@@ -265,13 +265,18 @@ func _collect_tree(root: String, files: Array[String]) -> bool:
 						_fault = "Cannot establish ownership through a linked entry: %s" % child
 						dir.list_dir_end()
 						return false
-					if dir.current_is_dir():
+					if dir.current_is_dir() and FileAccess.file_exists(child.path_join(".gdignore")):
+						# Godot never imports or loads anything under a `.gdignore`
+						# folder, so it holds no owners; art sources kept there
+						# would otherwise push a project past MAX_ENTRIES.
+						pass
+					elif dir.current_is_dir():
 						pending.append(child)
 					else:
 						files.append(child)
 					count += 1
 					if count > MAX_ENTRIES:
-						_set_fault("Project discovery exceeds %d entries; nothing changed" % MAX_ENTRIES, Errors.FILESYSTEM_DISCOVERY_FAILED)
+						_set_fault("Project discovery exceeds %d entries; nothing changed. Folders holding a .gdignore are not scanned" % MAX_ENTRIES, Errors.FILESYSTEM_DISCOVERY_FAILED)
 						dir.list_dir_end()
 						return false
 			if not await _yield_if_needed():
