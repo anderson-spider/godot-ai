@@ -12,6 +12,7 @@ from typing import Any
 
 import anyio
 import httpx2 as httpx
+import mcp.client.streamable_http as sdk_streamable_http
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
@@ -32,6 +33,12 @@ DEFAULT_INIT_TIMEOUT_SECONDS = 10.0
 DEFAULT_DISPATCH_MONITOR_SECONDS = 1.0
 DEFAULT_MONITOR_PROBE_TIMEOUT_SECONDS = 5.0
 DEFAULT_MONITOR_FAILURE_THRESHOLD = 3
+# The SDK reads each SSE response with httpx2's default 1 MiB event cap and
+# reports a larger event as "SSE stream ended without a response", so any tool
+# result over 1 MiB (an editor_screenshot past ~900 px) failed in the bridge.
+# The backend relays results up to the 4 MiB plugin envelope; JSON-RPC framing
+# and escaping add to that, so the bridge accepts twice the envelope.
+ATTACH_MAX_SSE_EVENT_BYTES = 8 * 1024 * 1024
 
 EnsureReady = Callable[[], Awaitable[BackendStatus]]
 ObserveBackend = Callable[[], Awaitable[BackendStatus | None]]
@@ -537,6 +544,18 @@ class AttachRecoveryMiddleware(Middleware):
                 return
 
 
+def _raise_sdk_sse_event_limit() -> None:
+    """Let the SDK's SSE reader accept every result the backend can relay.
+
+    The SDK constructs ``EventSource(response)`` with no size argument and has
+    no option to pass one, so the bridge rebinds the name it resolves.
+    """
+
+    sdk_streamable_http.EventSource = partial(  # type: ignore[assignment]
+        httpx.EventSource, max_event_size=ATTACH_MAX_SSE_EVENT_BYTES
+    )
+
+
 def create_attach_proxy(
     mcp_url: str,
     ensure_ready: EnsureReady,
@@ -544,6 +563,8 @@ def create_attach_proxy(
     capability_provider: CapabilityProvider,
 ) -> FastMCP[Any]:
     """Create a stdio-facing proxy using fresh downstream sessions per request."""
+
+    _raise_sdk_sse_event_limit()
 
     def backend_client() -> Client[Any]:
         transport = StreamableHttpTransport(

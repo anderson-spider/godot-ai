@@ -1176,3 +1176,48 @@ async def test_application_rpc_error_is_not_transport_loss(
         await AttachRecoveryMiddleware(ensure).on_call_tool(_context(), call_next)
     assert caught.value is failure
     assert calls == 1
+
+
+async def test_bridge_sse_reader_accepts_results_over_one_mebibyte(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 2 MiB tool result (a large editor_screenshot) must reach the client.
+
+    httpx2's default 1 MiB SSE event cap made the SDK report such a result as
+    "SSE stream ended without a response".
+    """
+    sdk = proxy_module.sdk_streamable_http
+    monkeypatch.setattr(sdk, "EventSource", sdk.EventSource)
+    payload = "x" * (2 * 1024 * 1024)
+    body = f'event: message\ndata: {{"blob": "{payload}"}}\n\n'.encode()
+
+    def response() -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+            request=httpx.Request("POST", "http://127.0.0.1:1/mcp"),
+        )
+
+    with pytest.raises(httpx.SSEError):
+        async for _ in httpx.EventSource(response()):
+            pass
+
+    create_attach_proxy(
+        "http://127.0.0.1:1/mcp",
+        ensure_ready=lambda: asyncio.sleep(0, _status()),
+        observe_backend=lambda: asyncio.sleep(0, _status()),
+        capability_provider=lambda: TEST_HTTP_CAPABILITY,
+    )
+    events = [event async for event in sdk.EventSource(response())]
+
+    assert len(events) == 1
+    assert len(events[0].data) > 2 * 1024 * 1024
+
+
+def test_sdk_still_builds_its_sse_reader_by_module_name() -> None:
+    """The limit rebinding only works while the SDK calls EventSource(response)."""
+    import inspect
+
+    source = inspect.getsource(proxy_module.sdk_streamable_http)
+    assert "EventSource(response)" in source
