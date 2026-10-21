@@ -697,10 +697,19 @@ func _game_input_mouse(params: Dictionary) -> Dictionary:
 ## Split from sending so editor tests can check events without injecting them.
 func _build_mouse_event(params: Dictionary) -> Dictionary:
 	var event := str(params.get("event", "button"))
-	var pos_result := _resolve_mouse_position(params.get("position"))
+	var target := str(params.get("target", ""))
+	var pos_result := _resolve_mouse_target(target, params.get("position"))
 	if pos_result.has("error"):
 		return {"reply": {"sent": false, "event": event, "error": pos_result.error}}
 	var pos: Vector2 = pos_result.position
+	var built := _build_mouse_input(event, pos, params)
+	if not target.is_empty() and bool(built.reply.get("sent", false)):
+		built.reply["target"] = target
+	return built
+
+
+## Build the motion or button event at a resolved window position.
+func _build_mouse_input(event: String, pos: Vector2, params: Dictionary) -> Dictionary:
 	match event:
 		"motion":
 			var mask_result := _resolve_button_mask(params.get("buttons"))
@@ -976,6 +985,60 @@ func _reply_input_sequence_error(request_id: String, message: String) -> void:
 	_last_game_command_reply = {"kind": "error", "op": "input_sequence", "message": message}
 	if EngineDebugger.is_active():
 		EngineDebugger.send_message("mcp:game_command_error", [request_id, message])
+
+
+## Resolve where input_mouse acts. A `target` node path wins the point from
+## the node's place in the window; otherwise the `position` param is used.
+func _resolve_mouse_target(target: String, position: Variant) -> Dictionary:
+	if target.is_empty():
+		return _resolve_mouse_position(position)
+	if position != null and not (position is Dictionary and (position as Dictionary).is_empty()):
+		return {"error": "Pass either target or position, not both"}
+	var node := _resolve_runtime_node(target)
+	if node == null:
+		return {"error": "Target node not found: %s" % target}
+	return _node_window_position(node)
+
+
+## Window position of a node in the coordinates Input.parse_input_event
+## expects: a Control's center, a Node2D's origin, or a Node3D's origin seen
+## through its viewport's camera.
+func _node_window_position(node: Node) -> Dictionary:
+	if node is CanvasItem:
+		var item := node as CanvasItem
+		var local: Vector2 = (item as Control).size / 2.0 if item is Control else Vector2.ZERO
+		return _viewport_to_window(item.get_viewport(), item.get_global_transform_with_canvas() * local)
+	if node is Node3D:
+		var camera := node.get_viewport().get_camera_3d()
+		if camera == null:
+			return {"error": "No active Camera3D renders %s" % _runtime_path(node)}
+		var origin := (node as Node3D).global_position
+		if camera.is_position_behind(origin):
+			return {"error": "%s is behind the active camera" % _runtime_path(node)}
+		return _viewport_to_window(node.get_viewport(), camera.unproject_position(origin))
+	return {"error": "Target must be a Control, Node2D or Node3D (got %s)" % node.get_class()}
+
+
+## Carry a point in a viewport's canvas up to the window, the inverse of how
+## Viewport.push_input localizes a mouse event. A SubViewportContainer maps its
+## SubViewport as SubViewport.get_screen_transform() does (stretch shrink
+## included). A SubViewport whose parent draws it by hand is mapped by that
+## parent's to_window(point) -> Vector2, returning the point in the parent's
+## own viewport; without one the on-screen place is unknown and is refused.
+func _viewport_to_window(viewport: Viewport, point: Vector2) -> Dictionary:
+	while viewport is SubViewport:
+		point = viewport.get_final_transform() * point
+		var parent := viewport.get_parent()
+		if parent is SubViewportContainer:
+			var container := parent as SubViewportContainer
+			var shrink := float(container.stretch_shrink) if container.stretch else 1.0
+			point = container.get_global_transform_with_canvas() * (point * shrink)
+		elif parent != null and parent.has_method("to_window"):
+			point = parent.call("to_window", point)
+		else:
+			return {"error": "Cannot place %s on screen: its parent is not a SubViewportContainer and has no to_window(point) method" % str(viewport.get_path())}
+		viewport = parent.get_viewport()
+	return {"position": viewport.get_final_transform() * point}
 
 
 ## Resolve a mouse-position param. Absent (null, or an empty {}) falls back to

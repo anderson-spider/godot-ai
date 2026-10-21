@@ -116,6 +116,7 @@ async def game_input_mouse(
     button: str = "left",
     pressed: bool = True,
     buttons: list[str] | None = None,
+    target: str = "",
 ) -> dict:
     params: dict[str, Any] = {
         "event": event,
@@ -125,6 +126,8 @@ async def game_input_mouse(
     }
     if buttons is not None:
         params["buttons"] = buttons
+    if target:
+        params["target"] = target
     return await _game_command(runtime, "input_mouse", params)
 
 

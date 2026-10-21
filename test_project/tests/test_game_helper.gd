@@ -342,6 +342,112 @@ func test_input_mouse_unknown_button_tracks_the_sent_left() -> void:
 	_reset_mouse_state()
 
 
+func test_input_mouse_target_control_lands_on_its_center() -> void:
+	var button := Button.new()
+	button.name = "TargetButton"
+	button.position = Vector2(100, 50)
+	button.size = Vector2(40, 20)
+	_root.add_child(button)
+	var expected: Vector2 = button.get_viewport().get_screen_transform() * button.get_global_transform_with_canvas() * Vector2(20, 10)
+	_reset_mouse_state()
+	var built: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "target": "/Main/%s/TargetButton" % ROOT_NAME})
+	assert_true(built.has("input"), str(built.reply))
+	if built.has("input"):
+		assert_eq(built.input.position, expected)
+		assert_eq(built.reply.target, "/Main/%s/TargetButton" % ROOT_NAME)
+	_reset_mouse_state()
+	button.queue_free()
+
+
+func test_input_mouse_target_maps_through_a_shrunk_subviewport() -> void:
+	## A Control inside a stretched SubViewport is drawn at its sub-viewport
+	## point times stretch_shrink, offset by the container.
+	var container := SubViewportContainer.new()
+	container.name = "TargetContainer"
+	container.position = Vector2(30, 40)
+	container.size = Vector2(200, 100)
+	container.stretch = true
+	container.stretch_shrink = 2
+	_root.add_child(container)
+	var sub := SubViewport.new()
+	sub.name = "Sub"
+	container.add_child(sub)
+	var inner := Control.new()
+	inner.name = "Inner"
+	inner.position = Vector2(10, 10)
+	inner.size = Vector2(20, 20)
+	sub.add_child(inner)
+	var expected: Vector2 = container.get_viewport().get_screen_transform() * container.get_global_transform_with_canvas() * Vector2(40, 40)
+	var built: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "target": "/Main/%s/TargetContainer/Sub/Inner" % ROOT_NAME})
+	assert_true(built.has("input"), str(built.reply))
+	if built.has("input"):
+		assert_true(built.input.position.is_equal_approx(expected), "%s != %s" % [built.input.position, expected])
+	_reset_mouse_state()
+	container.queue_free()
+
+
+class ManualViewportHost:
+	extends Node
+
+	func to_window(point: Vector2) -> Vector2:
+		return point * 3.0 + Vector2(5, 7)
+
+
+func test_input_mouse_target_uses_to_window_of_a_hand_drawn_subviewport() -> void:
+	## A game that draws its SubViewport itself (no container) declares where
+	## a point lands through to_window on the viewport's parent.
+	var host := ManualViewportHost.new()
+	host.name = "ManualHost"
+	_root.add_child(host)
+	var sub := SubViewport.new()
+	sub.name = "Sub"
+	host.add_child(sub)
+	var inner := Control.new()
+	inner.name = "Inner"
+	inner.position = Vector2(10, 20)
+	inner.size = Vector2(4, 6)
+	sub.add_child(inner)
+	# Inner's center (12, 23) through to_window is (41, 76) in the host's
+	# viewport; the editor's own containers carry it the rest of the way.
+	var expected: Vector2 = host.get_viewport().get_screen_transform() * Vector2(41, 76)
+	var built: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "target": "/Main/%s/ManualHost/Sub/Inner" % ROOT_NAME})
+	assert_true(built.has("input"), str(built.reply))
+	if built.has("input"):
+		assert_true(built.input.position.is_equal_approx(expected), "%s != %s" % [built.input.position, expected])
+	var orphan := Node.new()
+	orphan.name = "OrphanHost"
+	_root.add_child(orphan)
+	var orphan_sub := SubViewport.new()
+	orphan_sub.name = "Sub"
+	orphan.add_child(orphan_sub)
+	var lost := Control.new()
+	lost.name = "Lost"
+	orphan_sub.add_child(lost)
+	var refused: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "target": "/Main/%s/OrphanHost/Sub/Lost" % ROOT_NAME})
+	assert_false(refused.has("input"), "an unplaceable viewport sends nothing")
+	assert_contains(refused.reply.error, "to_window")
+	_reset_mouse_state()
+	host.queue_free()
+	orphan.queue_free()
+
+
+func test_input_mouse_target_rejects_bad_targets() -> void:
+	var plain := Node.new()
+	plain.name = "PlainNode"
+	_root.add_child(plain)
+	var missing: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "target": "/Main/%s/Nope" % ROOT_NAME})
+	assert_false(missing.has("input"))
+	assert_contains(missing.reply.error, "not found")
+	var both: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "target": "/Main/%s/PlainNode" % ROOT_NAME, "position": [1, 1]})
+	assert_false(both.has("input"))
+	assert_contains(both.reply.error, "either target or position")
+	var wrong: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "target": "/Main/%s/PlainNode" % ROOT_NAME})
+	assert_false(wrong.has("input"))
+	assert_contains(wrong.reply.error, "Control, Node2D or Node3D")
+	assert_eq(_helper.get("_mouse_button_mask"), 0, "a rejected target presses nothing")
+	plain.queue_free()
+
+
 func test_input_mouse_invalid_event_sends_nothing() -> void:
 	var bad: Dictionary = _helper.call("_build_mouse_event", {"event": "scroll"})
 	assert_false(bad.has("input"))

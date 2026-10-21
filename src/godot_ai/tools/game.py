@@ -40,7 +40,7 @@ Ops:
   - input_key(key, pressed=True, echo=False)
         Send a key press/release to the running game.
   - input_mouse(event, position=None, button="left", pressed=True,
-                buttons=None)
+                buttons=None, target="")
         Send a mouse motion or button event. event: "motion" | "button".
         position is a {x, y} object or [x, y] array; omit it to use the
         game's current cursor position. A present but malformed position is
@@ -52,6 +52,12 @@ Ops:
         event, e.g. ["left"]; names: left, right, middle. Wheel steps are
         one-shot and never held. Button replies list the buttons held after
         the event; motion replies list the buttons that motion carried.
+        target (instead of position) is a running node path, resolved like
+        get_node_info's path: the event lands on a Control's center, a
+        Node2D's origin, or a Node3D's origin through the active camera,
+        mapped into window coordinates through any SubViewportContainer. A
+        SubViewport the game draws by hand needs a to_window(point) method on
+        its parent; without one the call is refused.
   - input_gamepad(device=0, control="button", index=0, pressed=True, value=0.0)
         Send a joypad button or axis event. control: "button" | "axis".
   - input_action(action, pressed=True, strength=1.0)
