@@ -207,7 +207,7 @@ func test_handler_map_outcome_timeout_shape() -> void:
 		"timeout", "run", results, 7, Time.get_ticks_msec() - 5000, 120.0
 	)
 	assert_eq(envelope["error"]["code"], ErrorCodes.TEST_RUN_TIMEOUT, "timeout error code")
-	assert_contains(envelope.error.data.cache_warning, "Restart the editor")
+	assert_contains(envelope.error.data.cache_warning, "script_manage(op=\"reload\")")
 	var data: Dictionary = envelope["error"]["data"]
 	assert_eq(int(data["tests_not_run"]), 7, "remaining estimate carried")
 	assert_eq(int(data["passed"]), 4, "partial pass count carried")
@@ -223,7 +223,7 @@ func test_handler_map_outcome_paused_shape() -> void:
 		2, Time.get_ticks_msec(), 110.0
 	)
 	assert_eq(envelope["error"]["code"], ErrorCodes.INTERNAL_ERROR, "paused is an invariant violation")
-	assert_contains(envelope.error.data.cache_warning, "Restart the editor")
+	assert_contains(envelope.error.data.cache_warning, "script_manage(op=\"reload\")")
 	assert_true(envelope["error"]["data"].has("pause_depth"), "pause depth surfaced")
 
 
@@ -401,7 +401,7 @@ func test_unknown_suite_filter_is_an_error_not_an_empty_run() -> void:
 	## A protocol error, never an "error" key inside a data success envelope —
 	## the same ErrorCodes.make contract as the paused/timeout aborts.
 	assert_is_error(unknown, ErrorCodes.INVALID_PARAMS)
-	assert_contains(unknown.error.data.cache_warning, "Restart the editor")
+	assert_contains(unknown.error.data.cache_warning, "script_manage(op=\"reload\")")
 	var message := str(unknown["error"]["message"])
 	assert_contains(message, "custom_tools")
 	assert_contains(message, "truncated",

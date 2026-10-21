@@ -1,7 +1,7 @@
 """MCP tools for script creation, reading, and management.
 
 Top-level: ``script_create``, ``script_attach``, ``script_patch`` (high-traffic).
-Everything else (detach, read, find_symbols) collapses into ``script_manage``.
+Everything else (detach, read, find_symbols, reload) collapses into ``script_manage``.
 """
 
 from __future__ import annotations
@@ -27,6 +27,21 @@ Ops:
         Outline a script. .gd: class_name, extends, functions, signals,
         @export vars. .cs: class, base type, methods, [Signal] delegates,
         [Export] members. Response ``language`` says which parser ran.
+  • reload(paths=["res://"], reset_static=False)
+        Refresh stale loaded GDScripts after files were edited outside the
+        editor (hot reload without restarting): every loaded .gd under
+        ``paths`` (files or folders) whose file changed on disk is
+        recompiled in place, then every loaded script that preloads or
+        extends it, dependencies first — so preloaded helpers and test
+        dependencies run the new code. reset_static=True also reloads the
+        unchanged scripts in ``paths`` without keeping state, which resets
+        static variables to their initializers (only @tool scripts run
+        initializers in the editor); a script with live instances keeps
+        its state and reports ``instances_alive``. A script that fails to
+        compile keeps its old code (``failed``, reason parse_error) and its
+        dependents are skipped (dependency_failed). Scripts reached only by
+        load() or class_name are not followed. The Godot AI plugin's own
+        scripts are never reloaded. Not undoable.
 
 Language support: GDScript is the full contract. C# (.cs) is text-only —
 files are written, read and outlined, but Godot AI does not build .NET or
@@ -137,9 +152,11 @@ def register_script_tools(mcp: FastMCP) -> None:
             "read": script_handlers.script_read,
             "detach": script_handlers.script_detach,
             "find_symbols": script_handlers.script_find_symbols,
+            "reload": script_handlers.script_reload,
         },
         read_resource_forms={
             "read": "godot://script/{path*}",
             "find_symbols": None,  ## Per-script symbol lookup; no resource form.
+            "reload": None,  ## Mutates editor state; no resource form.
         },
     )

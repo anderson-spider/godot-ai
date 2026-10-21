@@ -231,7 +231,7 @@ Calls take the form:
 |------|-----|
 | `scene_manage` | `create`, `save_as`, `get_roots` |
 | `node_manage` | `get_children`, `get_groups`, `delete`, `duplicate`, `duplicate_grid`, `rename`, `move`, `reparent`, `add_to_group`, `remove_from_group` |
-| `script_manage` | `read`, `detach`, `find_symbols` (`.gd` and `.cs`) |
+| `script_manage` | `read`, `detach`, `find_symbols` (`.gd` and `.cs`), `reload` |
 | `project_manage` | `stop`, `settings_get`, `settings_set`, `set_main_scene`, `export_presets`, `export` |
 | `editor_manage` | `state`, `selection_get`, `selection_set`, `monitors_get`, `quit`, `logs_clear`, `game_eval`, `compare_images` |
 | `session_manage` | `list` |
@@ -417,8 +417,29 @@ don't, and the only path that supports `session_id` pinning.
 
 `test_run` and `test_manage(op="results_get")` include `cache_warning` because
 preloaded GDScript dependencies can remain stale after edits in the same
-editor. Restart the editor before validating dependency changes; see the
+editor. Call `script_manage(op="reload")` (or restart the editor) before
+validating dependency changes; see the
 [freshness contract](tool-surface.md#test-run-freshness-after-dependency-edits).
+
+### Reload stale scripts
+
+`script_manage(op="reload", params={"paths": ["res://tests"], "reset_static": false})`
+recompiles, in place, every loaded `.gd` under `paths` (files or folders,
+default `res://`) whose file changed on disk, then every loaded script that
+preloads or extends one of them, dependencies first, so preloaders run the
+new code and dependents get the new inlined constants. Dependencies are read
+from `preload("...")` and `extends "..."` in the source; scripts reached only
+through `load()` or a `class_name` are not followed. `reset_static=true` also
+reloads the unchanged scripts in `paths` without keeping state, which resets
+static variables to their initializers (in the editor only `@tool` scripts run
+initializers); a script with live instances is reloaded keeping its state and
+reports `instances_alive`, and the engine logs "Cannot reload script while
+instances exist". A script that fails to compile keeps its old code and is
+listed under `failed` (`parse_error`), with its dependents as
+`dependency_failed`. The reply lists `reloaded` and `failed` entries by path
+with a `reason`, `loaded_scripts` and `truncated` (the walk stops at 5000
+`.gd` files). The Godot AI plugin's own scripts are never reloaded. Not
+undoable.
 
 ### Inspect a live native resource
 

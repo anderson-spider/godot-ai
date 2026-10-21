@@ -42,10 +42,11 @@ def register_testing_tools(mcp: FastMCP) -> None:
         suite names, duration) plus failures only. verbose=True includes
         every individual test result (each with per-test ``duration_ms``).
 
-        Preloaded GDScript dependencies may remain stale after source edits;
-        the response includes cache_warning. Restart the editor before using
-        a rerun to validate dependency edits. ResourceLoader cache modes alone
-        do not refresh the GDScript preload cache.
+        Preloaded GDScript dependencies may remain stale after source edits
+        made outside script_patch/script_create; the response includes
+        cache_warning. Call script_manage(op="reload") (or restart the editor)
+        before using a rerun to validate dependency edits. ResourceLoader cache
+        modes alone do not refresh the GDScript preload cache.
 
         The whole run has a 300s budget; the plugin aborts between tests
         shortly before it expires and returns TEST_RUN_TIMEOUT with the

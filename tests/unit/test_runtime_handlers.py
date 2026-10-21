@@ -3242,6 +3242,18 @@ async def test_script_find_symbols_handler():
     assert client.calls[-1]["params"] == {"path": "res://scripts/player.gd"}
 
 
+async def test_script_reload_handler_forwards_paths_and_reset_static():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+    await script_handlers.script_reload(runtime)
+    assert client.calls[-1]["command"] == "reload_scripts"
+    assert client.calls[-1]["params"] == {"reset_static": False}
+    await script_handlers.script_reload(runtime, paths="res://tests", reset_static=True)
+    assert client.calls[-1]["params"] == {"paths": ["res://tests"], "reset_static": True}
+    await script_handlers.script_reload(runtime, paths=["res://a.gd", "res://b"])
+    assert client.calls[-1]["params"] == {"paths": ["res://a.gd", "res://b"], "reset_static": False}
+
+
 # ---------------------------------------------------------------------------
 # Resource handler tests
 # ---------------------------------------------------------------------------

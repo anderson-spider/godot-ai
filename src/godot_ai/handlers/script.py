@@ -52,3 +52,15 @@ async def script_detach(runtime: DirectRuntime, path: str) -> dict:
 
 async def script_find_symbols(runtime: DirectRuntime, path: str) -> dict:
     return await runtime.send_command("find_symbols", {"path": path})
+
+
+async def script_reload(
+    runtime: DirectRuntime,
+    paths: list[str] | str | None = None,
+    reset_static: bool = False,
+) -> dict:
+    await require_writable_async(runtime)
+    params: dict = {"reset_static": reset_static}
+    if paths:
+        params["paths"] = [paths] if isinstance(paths, str) else list(paths)
+    return await runtime.send_command("reload_scripts", params)

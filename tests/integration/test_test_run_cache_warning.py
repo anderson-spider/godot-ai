@@ -1,4 +1,4 @@
-"""Real-editor evidence for the documented preload freshness limit (#938)."""
+"""Real-editor evidence for the documented preload freshness limit (#938) and its fix."""
 from __future__ import annotations
 
 import json
@@ -68,6 +68,9 @@ func _process(_delta: float) -> void:
         EditorInterface.get_resource_filesystem().update_file("res://tests/helper.gd")
         write_json("res://rerun.json", handler.run_tests({"suite": "cache"}))
         write_json("res://saved.json", handler.get_test_results({}))
+        var scripts = load("res://addons/godot_ai/handlers/script_handler.gd").new(null, null)
+        write_json("res://reload.json", scripts.reload_scripts({"paths": ["res://tests"]}))
+        write_json("res://reloaded.json", handler.run_tests({"suite": "cache"}))
     get_tree().quit(0)
 func write_json(path: String, data: Dictionary) -> void:
     var file = FileAccess.open(path, FileAccess.WRITE)
@@ -82,8 +85,19 @@ func write_json(path: String, data: Dictionary) -> void:
     assert before["passed"] == 1 and before["failed"] == 0
     assert 'return "new"' in (project / "tests/helper.gd").read_text(encoding="utf-8")
     assert rerun["failed"] == 1, rerun
-    assert "Restart the editor" in rerun["cache_warning"]
+    assert 'script_manage(op="reload")' in rerun["cache_warning"]
     assert saved["cache_warning"] == rerun["cache_warning"]
+    ## script_manage(op="reload") recompiles the stale helper in place, so the
+    ## suite's preload sees the edit without restarting the editor.
+    ## The helper first, then the suite that preloads it.
+    reload = json.loads((project / "reload.json").read_text(encoding="utf-8"))["data"]
+    assert [(entry["path"], entry["reason"]) for entry in reload["reloaded"]] == [
+        ("res://tests/helper.gd", "changed"),
+        ("res://tests/test_cache.gd", "dependent"),
+    ], reload
+    assert reload["failed"] == []
+    reloaded = json.loads((project / "reloaded.json").read_text(encoding="utf-8"))["data"]
+    assert reloaded["passed"] == 1 and reloaded["failed"] == 0, reloaded
     run_godot_editor(project, godot, allow_headless=False, timeout=90)
     fresh = json.loads((project / "fresh.json").read_text(encoding="utf-8"))["data"]
     assert fresh["passed"] == 1 and fresh["failed"] == 0, fresh

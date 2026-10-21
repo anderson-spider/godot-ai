@@ -50,19 +50,26 @@ When using `batch_execute`'s `commands[].command` field, use the **plugin comman
 
 ## Test-run freshness after dependency edits
 
-`test_run` reloads suite scripts, but **does not guarantee fresh preloaded
-GDScript dependencies** in an existing editor process (#938). Results and
-`test_manage(op="results_get")` include `cache_warning`: restart the editor
-before treating a rerun as validation of changes to a preloaded helper or its
-nested dependencies. A passing rerun can otherwise validate old code.
+`test_run` reloads suite scripts, but **does not refresh preloaded GDScript
+dependencies** in an existing editor process (#938). Results and
+`test_manage(op="results_get")` include `cache_warning`: after a preloaded
+helper or one of its nested dependencies changed outside `script_patch` /
+`script_create`, call `script_manage(op="reload")` (or restart the editor)
+before treating a rerun as validation. A passing rerun can otherwise validate
+old code.
 
 `CACHE_MODE_IGNORE_DEEP` and `CACHE_MODE_REPLACE` do not invalidate the
 GDScript compile-time preload cache. #944 makes `script_patch` and
 `script_create(overwrite=true)` refresh the specific cached script they write
 using `source_code` and `reload(true)`; inspect `reloaded` / `reload_reason`.
-That targeted refresh is not a general dependency-graph freshness guarantee
-for filesystem writes, external edits, or already-compiled consumers. The
-runner does not recursively reload arbitrary live scripts, which may include
-its own executing plugin code and stateful script instances. A fresh editor
-process is the supported general workaround; a filesystem scan or plugin
-reload alone is insufficient.
+`script_manage(op="reload")` is the general refresh: it compares every loaded
+script's `source_code` with its file, recompiles the changed ones in place and
+then the loaded scripts that preload or extend them, dependencies first (a
+dependent recompiled before its dependency would inline stale constants). It
+follows dependencies by path only (`load()` and `class_name` uses are not
+followed), never touches `res://addons/godot_ai/` (its own executing code),
+and keeps static state unless `reset_static=true`, which the engine refuses
+for a script with live instances. The runner itself still does not reload
+dependencies on its own. A filesystem scan or plugin reload is not a
+substitute: a headless editor skips the refresh, and neither orders
+dependents.

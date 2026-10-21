@@ -15,8 +15,9 @@ extends "res://addons/godot_ai/handlers/command_handler.gd"
 const ErrorCodes := preload("res://addons/godot_ai/utils/error_codes.gd")
 
 const CACHE_WARNING := (
-	"Preloaded GDScript dependencies may be stale after source edits. "
-	+ "Restart the editor before treating this run as validation of dependency changes. "
+	"Preloaded GDScript dependencies may be stale after source edits made outside "
+	+ "script_patch/script_create. Call script_manage(op=\"reload\") (or restart the editor) "
+	+ "before treating this run as validation of dependency changes. "
 	+ "ResourceLoader cache modes do not invalidate GDScript's preload cache."
 )
 

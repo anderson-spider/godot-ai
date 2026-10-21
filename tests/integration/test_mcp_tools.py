@@ -1982,6 +1982,45 @@ class TestScriptDetachTool:
 
 
 # ---------------------------------------------------------------------------
+# script_manage reload
+# ---------------------------------------------------------------------------
+
+
+class TestScriptReloadTool:
+    async def test_reload_forwards_paths_and_returns_entries(self, mcp_stack):
+        client, plugin = mcp_stack
+        reply = {
+            "paths": ["res://tests"],
+            "reset_static": True,
+            "loaded_scripts": 2,
+            "reloaded": [
+                {"path": "res://tests/helper.gd", "reason": "changed", "static_reset": True},
+                {"path": "res://tests/test_a.gd", "reason": "dependent", "static_reset": False},
+            ],
+            "reloaded_count": 2,
+            "failed": [],
+            "failed_count": 0,
+            "truncated": False,
+            "undoable": False,
+        }
+
+        async def respond():
+            cmd = await plugin.recv_command()
+            assert cmd["command"] == "reload_scripts"
+            assert cmd["params"] == {"paths": ["res://tests"], "reset_static": True}
+            await plugin.send_response(cmd["request_id"], reply)
+
+        task = asyncio.create_task(respond())
+        result = await client.call_tool(
+            "script_manage",
+            {"op": "reload", "params": {"paths": ["res://tests"], "reset_static": True}},
+        )
+        await task
+        assert result.data["reloaded_count"] == 2
+        assert result.data["reloaded"][1]["reason"] == "dependent"
+
+
+# ---------------------------------------------------------------------------
 # script_find_symbols
 # ---------------------------------------------------------------------------
 

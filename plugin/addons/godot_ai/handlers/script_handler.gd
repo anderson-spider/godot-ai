@@ -4,6 +4,7 @@ extends "res://addons/godot_ai/handlers/command_handler.gd"
 const ErrorCodes := preload("res://addons/godot_ai/utils/error_codes.gd")
 const DiagnosticsCapture := preload("res://addons/godot_ai/utils/diagnostics_capture.gd")
 const ValidationLogger := preload("res://addons/godot_ai/runtime/validation_logger.gd")
+const ScriptReloader := preload("res://addons/godot_ai/utils/script_reloader.gd")
 
 ## Handles script creation, reading, attaching, detaching, and symbol inspection.
 ##
@@ -586,6 +587,36 @@ func detach_script(params: Dictionary) -> Dictionary:
 			"undoable": true,
 		}
 	}
+
+
+## Reload loaded GDScripts whose files changed on disk, and their dependents;
+## with reset_static, every loaded script in scope, rerunning static
+## initializers. See utils/script_reloader.gd.
+func reload_scripts(params: Dictionary) -> Dictionary:
+	var raw: Variant = params.get("paths", ["res://"])
+	if raw is String:
+		raw = [raw]
+	if not (raw is Array):
+		return ErrorCodes.make(ErrorCodes.WRONG_TYPE, "paths must be a list of res:// paths (got %s)" % type_string(typeof(raw)))
+	var roots := PackedStringArray()
+	for entry: Variant in raw:
+		if not (entry is String):
+			return ErrorCodes.make(ErrorCodes.WRONG_TYPE, "paths must hold strings (got %s)" % type_string(typeof(entry)))
+		var root: String = entry
+		var path_err = McpPathValidator.path_error(root, "paths")
+		if path_err != null:
+			return path_err
+		if (root + "/").begins_with(ScriptReloader.EXCLUDED_ROOT):
+			return ErrorCodes.make(ErrorCodes.VALUE_OUT_OF_RANGE, "paths: the Godot AI plugin's own scripts are not reloaded (got %s)" % root)
+		if root.ends_with(".gd"):
+			if not FileAccess.file_exists(root):
+				return ErrorCodes.make(ErrorCodes.RESOURCE_NOT_FOUND, "File not found: %s" % root)
+		elif not DirAccess.dir_exists_absolute(root):
+			return ErrorCodes.make(ErrorCodes.RESOURCE_NOT_FOUND, "paths: %s is neither a .gd file nor a folder" % root)
+		roots.append(root)
+	if roots.is_empty():
+		return ErrorCodes.make(ErrorCodes.MISSING_REQUIRED_PARAM, "paths is empty; omit it to reload the whole project")
+	return {"data": ScriptReloader.reload_changed(roots, bool(params.get("reset_static", false)))}
 
 
 func find_symbols(params: Dictionary) -> Dictionary:
