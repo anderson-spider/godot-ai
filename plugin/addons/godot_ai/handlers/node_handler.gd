@@ -489,8 +489,10 @@ func duplicate_node(params: Dictionary) -> Dictionary:
 	## Ported from upstream PR #927 (issue #904). Record descendant owners
 	## inside the action so redo restores them. Undo is just remove_child of
 	## the copy; descendants live on `dup` via add_do_reference and do not need
-	## their own undo set_owner.
-	var descendants := _collect_descendants(dup)
+	## their own undo set_owner. duplicate() already owns the nodes inside an
+	## instanced sub-scene by the copied instance; only the unowned local nodes
+	## join the edited scene, or the sub-scene's nodes would be saved into it.
+	var descendants := _collect_descendants(dup).filter(func(child: Node) -> bool: return child.owner == null)
 
 	_undo_redo.create_action("MCP: Duplicate %s" % node.name)
 	_undo_redo.add_do_method(parent, "add_child", dup, true)

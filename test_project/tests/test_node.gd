@@ -1871,6 +1871,44 @@ func test_duplicate_restores_descendant_owner_on_redo() -> void:
 	chain.teardown.call()
 
 
+func test_duplicate_instanced_scene_keeps_inner_nodes_in_the_instance() -> void:
+	## Nodes inside an instanced sub-scene are owned by the instance root.
+	## Re-owning them to the edited scene root would save them into the .tscn
+	## as local nodes beside the instance reference.
+	var scene_root := EditorInterface.get_edited_scene_root()
+	if scene_root == null:
+		skip("No scene root — is a scene open?")
+		return
+	var tmp_root := Node2D.new()
+	tmp_root.name = "DupInstanceRoot"
+	var tmp_child := Node2D.new()
+	tmp_child.name = "Inner"
+	tmp_root.add_child(tmp_child)
+	tmp_child.owner = tmp_root
+	var packed := PackedScene.new()
+	packed.pack(tmp_root)
+	var tmp_path := "res://tests/_mcp_test_dup_instance.tscn"
+	ResourceSaver.save(packed, tmp_path)
+	tmp_root.queue_free()
+	assert_has_key(_handler.create_node({"scene_path": tmp_path, "name": "_McpDupInstance"}), "data")
+
+	var result := _handler.duplicate_node({"path": "/Main/_McpDupInstance", "name": "_McpDupInstanceCopy"})
+	assert_has_key(result, "data")
+	var copy: Node = scene_root.get_node_or_null("_McpDupInstanceCopy")
+	assert_ne(copy, null, "copy exists")
+	if copy != null:
+		assert_eq(copy.owner, scene_root, "the copy itself belongs to the edited scene")
+		assert_eq(copy.scene_file_path, tmp_path, "the copy stays an instance")
+		var inner: Node = copy.get_node_or_null("Inner")
+		assert_ne(inner, null, "inner node exists")
+		if inner != null:
+			assert_eq(inner.owner, copy, "inner node stays owned by the copied instance")
+
+	assert_true(editor_undo(_undo_redo), "undo duplicate should succeed")
+	assert_true(editor_undo(_undo_redo), "undo instance should succeed")
+	DirAccess.remove_absolute(tmp_path)
+
+
 # ----- move_node -----
 
 func test_move_node_scene_root() -> void:
