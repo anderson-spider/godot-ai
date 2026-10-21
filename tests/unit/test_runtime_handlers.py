@@ -1902,6 +1902,21 @@ async def test_game_input_mouse_sends_game_command():
     }
 
 
+async def test_game_input_mouse_forwards_buttons_only_when_given():
+    client = StubClient()
+    runtime = DirectRuntime(registry=SessionRegistry(), client=client)
+
+    await game_handlers.game_input_mouse(
+        runtime, event="motion", position={"x": 30, "y": 40}, buttons=["left"]
+    )
+
+    assert client.calls[-1]["params"]["params"]["buttons"] == ["left"]
+
+    await game_handlers.game_input_mouse(runtime, event="motion", position={"x": 31, "y": 40})
+
+    assert "buttons" not in client.calls[-1]["params"]["params"]
+
+
 async def test_game_input_gamepad_sends_game_command():
     client = StubClient()
     runtime = DirectRuntime(registry=SessionRegistry(), client=client)
