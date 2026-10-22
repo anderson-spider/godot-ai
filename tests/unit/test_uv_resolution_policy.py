@@ -16,7 +16,7 @@ def _source(relative: str) -> str:
 
 def test_one_policy_owns_public_index_and_explicit_qualification_escape() -> None:
     policy = _source("utils/uv_resolution_policy.gd")
-    args = get_func_block(policy, "static func args() -> Array[String]:")
+    args = get_func_block(policy, "static func args(allow_build: bool = false) -> Array[String]:")
 
     assert policy.count('const PUBLIC_INDEX := "https://pypi.org/simple"') == 1
     assert 'const QUALIFICATION_INDEX_ENV := "GODOT_AI_QUALIFICATION_PYTHON_INDEX"' in policy
@@ -33,19 +33,25 @@ def test_one_policy_owns_public_index_and_explicit_qualification_escape() -> Non
     for option in ("--index", "--default-index", "--find-links"):
         assert option in args
     assert "if not qualification_authorized():" in args
+    # A pinned git source must be built; it may drop that one flag and nothing else.
+    assert 'result.erase("--no-build")' in args
+    assert args.count("result.erase(") == 1
 
 
 def test_every_uvx_server_attach_and_prewarm_builder_uses_one_policy() -> None:
     configurator = _source("client_configurator.gd")
     attach = get_func_block(configurator, "static func _resolve_attach_launch_uncached(")
     server = get_func_block(configurator, "static func get_server_command(")
-    prewarm = get_func_block(
-        configurator, "static func prewarm_server_package_argv(version: String) -> Array[String]:"
-    )
+    prewarm = get_func_block(configurator, "static func prewarm_server_package_argv(")
+    source = get_func_block(configurator, "static func uvx_server_from(")
 
-    assert "UvResolution.args()" in attach
+    assert "uvx_server_from(" in attach
+    assert "uvx_server_from(" in server
     assert "UvResolution.args()" in server
+    assert "uvx_server_from(" in prewarm
     assert "UvResolution.args()" in prewarm
+    assert "UvResolution.args()" in source
+    assert "UvResolution.args(true)" in source
 
 
 def test_godot_owned_server_and_prewarm_spawns_strip_uv_environment() -> None:
@@ -59,9 +65,7 @@ def test_godot_owned_server_and_prewarm_spawns_strip_uv_environment() -> None:
         "static func _create_process_with_environment(",
     )
     piped = get_func_block(cli_exec, "static func _run_piped(")
-    prewarm = get_func_block(
-        configurator, "static func prewarm_server_package_blocking("
-    )
+    prewarm = get_func_block(configurator, "static func _run_prewarm(")
 
     for name in (
         "UV_INDEX",

@@ -406,7 +406,8 @@ static func capture_launch_context(endpoint_policy: Dictionary = {}) -> Dictiona
 		"ws_port": int(policy.get("ws_port", DEFAULT_WS_PORT)),
 		"excluded_domains": str(policy.get("excluded_domains", "")),
 		"plugin_version": get_plugin_version(),
-		"allow_dev_venv": mode_override() != "user",
+		"allow_dev_venv": mode_override() != "user" and server_source().is_empty(),
+		"server_source": server_source(),
 		"platform": OS.get_name(),
 		"server_url": "http://127.0.0.1:%d/mcp" % captured_http_port,
 		"project_roots": capture_project_roots(),
@@ -786,8 +787,11 @@ static func warm_env_snapshot(endpoint_policy: Dictionary = {}) -> void:
 			for env_name in scope_envs:
 				if not env_name.is_empty() and not extras.has(env_name):
 					extras.append(env_name)
+	if not extras.has(SERVER_SOURCE_ENV):
+		extras.append(SERVER_SOURCE_ENV)
 	McpPathTemplate.warm_env_snapshot(extras)
 	UvResolution.warm_environment()
+	_server_source_setting()
 	_editor_setting_lookup(MODE_OVERRIDE_SETTING)
 	_editor_setting_lookup(SETTING_STARTUP_TRACE)
 	_editor_setting_lookup(SETTING_KEEP_SERVER_ON_EXIT)
@@ -1477,10 +1481,11 @@ static func _resolve_attach_launch_uncached(
 		## that a GUI-launched client may be unable to resolve from its PATH.
 		uvx = find_uvx()
 	if not uvx.is_empty():
-		var uvx_args := UvResolution.args()
+		var launch := uvx_server_from(plugin_version, str(launch_context.get("server_source", "")))
+		var uvx_args: Array[String] = launch.args
 		uvx_args.append_array([
 			"--link-mode", "copy",
-			"--from", "godot-ai==%s" % _pypi_pin_version(plugin_version),
+			"--from", launch.from,
 			"godot-ai",
 		])
 		uvx_args.append_array(common_args)
@@ -1663,6 +1668,67 @@ static func _attach_discovery_error(message: String) -> Dictionary:
 	return {"ok": false, "error": message}
 
 
+## Where uvx installs the server from, instead of the plugin's PyPI pin. Set
+## per project in Project Settings → `godot_ai/server_source` (committed with
+## the game, so it follows the project) or via `GODOT_AI_SERVER_SOURCE` for CLI
+## launches. Takes any uv requirement source, typically a branch of a fork:
+## `git+https://github.com/<owner>/godot-ai@<branch>`.
+##
+## Setting it also skips the dev_venv tier: a project that names its server
+## source wants that build, not whatever a nearby checkout happens to hold.
+## uv must build a git source, so this launch drops `--no-build`; every other
+## resolution flag of the production policy stays.
+const SERVER_SOURCE_SETTING := "godot_ai/server_source"
+const SERVER_SOURCE_ENV := "GODOT_AI_SERVER_SOURCE"
+static var _server_source_snapshot: Variant = null
+static var _server_source_mutex := Mutex.new()
+
+
+## Same thread contract as `_editor_setting_lookup`: live read on the main
+## thread, snapshot only on workers.
+static func _server_source_setting() -> Variant:
+	if OS.get_thread_caller_id() == OS.get_main_thread_id():
+		var live: Variant = null
+		if ProjectSettings.has_setting(SERVER_SOURCE_SETTING):
+			live = ProjectSettings.get_setting(SERVER_SOURCE_SETTING)
+		_server_source_mutex.lock()
+		_server_source_snapshot = live
+		_server_source_mutex.unlock()
+		return live
+	_server_source_mutex.lock()
+	var cached: Variant = _server_source_snapshot
+	_server_source_mutex.unlock()
+	return cached
+
+
+static func server_source() -> String:
+	var setting: Variant = _server_source_setting()
+	var raw := "" if setting == null else str(setting).strip_edges()
+	if raw.is_empty():
+		raw = McpPathTemplate.env_lookup(SERVER_SOURCE_ENV).strip_edges()
+	return normalize_server_source(raw)
+
+
+## Pure validator split out for tests. A source with whitespace cannot be one
+## uv requirement and is ignored rather than passed on as several argv words.
+static func normalize_server_source(raw: String) -> String:
+	var value := raw.strip_edges()
+	if value.is_empty():
+		return ""
+	for ch in [" ", "\t", "\n", "\r"]:
+		if value.contains(ch):
+			push_warning("godot-ai: ignoring server source with whitespace: '%s'" % value)
+			return ""
+	return value
+
+
+## The `--from` value and the uv flags for a uvx launch of the server.
+static func uvx_server_from(plugin_version: String, source: String) -> Dictionary:
+	if source.is_empty():
+		return {"from": "godot-ai==%s" % _pypi_pin_version(plugin_version), "args": UvResolution.args()}
+	return {"from": source, "args": UvResolution.args(true)}
+
+
 ## Override for the dev-vs-user heuristic. Accepted values:
 ##   "dev"   — force dev-checkout mode (skip update check + self-install)
 ##   "user"  — force user-install mode (run update check, allow self-install)
@@ -1742,13 +1808,21 @@ static func get_server_command(trace: Callable = Callable()) -> Array[String]:
 	## .venv exists — the override then becomes an actual workaround for
 	## the "user venv misidentified as dev checkout" bug, not just a
 	## cosmetic relabel.
-	if mode_override() != "user":
+	var source := server_source()
+	if mode_override() != "user" and source.is_empty():
 		var venv_python := _cached_venv_python()
 		if not venv_python.is_empty():
 			print("MCP | using dev venv: %s" % venv_python)
 			return [venv_python, "-m", "godot_ai"]
 
 	var uvx := find_uvx(trace)
+	if not uvx.is_empty() and not source.is_empty():
+		print("MCP | using uvx (%s)" % source)
+		var source_cmd: Array[String] = [uvx]
+		var launch := uvx_server_from(get_plugin_version(), source)
+		source_cmd.append_array(launch.args)
+		source_cmd.append_array(["--from", launch.from, "godot-ai"])
+		return source_cmd
 	if not uvx.is_empty():
 		var version := get_plugin_version()
 		## PEP 440 local build tags (e.g. 3.0.2+local.1) are not on PyPI.
@@ -1789,7 +1863,7 @@ static func get_server_command(trace: Callable = Callable()) -> Array[String]:
 ## Returned as a stable string so handshakes and session_list can expose it
 ## to MCP callers. Values track the `Literal` on the Python side.
 static func get_server_launch_mode() -> String:
-	if mode_override() != "user" and not _cached_venv_python().is_empty():
+	if mode_override() != "user" and server_source().is_empty() and not _cached_venv_python().is_empty():
 		return "dev_venv"
 	if not find_uvx().is_empty():
 		return "uvx"
@@ -1818,7 +1892,12 @@ static func find_uvx(trace: Callable = Callable()) -> String:
 ## while OS.create_process argv can't be shell-injected, constraining the
 ## pin keeps a hostile tag from smuggling anything into the requirement
 ## spec uv parses (#890 review).
-static func prewarm_server_package_argv(version: String) -> Array[String]:
+static func prewarm_server_package_argv(version: String, source: String = "") -> Array[String]:
+	if not source.is_empty():
+		var launch := uvx_server_from(version, source)
+		var source_args: Array[String] = launch.args
+		source_args.append_array(["--from", launch.from, "godot-ai", "--version"])
+		return source_args
 	var pinned := version.strip_edges()
 	if pinned.is_empty():
 		return []
@@ -1863,25 +1942,7 @@ static func prewarm_server_package_blocking(
 	timeout_ms: int = PREWARM_TIMEOUT_MS,
 	cancel_check: Callable = Callable(),
 ) -> Dictionary:
-	var args := prewarm_server_package_argv(version)
-	if args.is_empty():
-		return {"skipped": true, "reason": "no version pin"}
-	var uvx := find_uvx()
-	if uvx.is_empty():
-		## dev-venv and system tiers have no per-version cache to warm.
-		return {"skipped": true, "reason": "no uvx"}
-	var command: Array[String] = [uvx]
-	command.append_array(args)
-	var result := McpCliExec.run(
-		uvx,
-		args,
-		timeout_ms,
-		true,
-		cancel_check,
-		UvResolution.is_production_command(command),
-	)
-	result["skipped"] = false
-	return result
+	return _run_prewarm(prewarm_server_package_argv(version), timeout_ms, cancel_check)
 
 
 ## Decide whether the freshly-written entry has an environment worth warming.
@@ -1905,10 +1966,11 @@ static func prewarm_attach_plan(
 	var tier := str(launch.get("tier", ""))
 	if tier != "uvx":
 		return {"warm": false, "version": "", "reason": "tier %s has no env to warm" % tier}
+	var source := str(launch_context.get("server_source", ""))
 	var version := _pypi_pin_version(str(launch_context.get("plugin_version", "")))
-	if version.is_empty():
+	if version.is_empty() and source.is_empty():
 		return {"warm": false, "version": "", "reason": "no version pin"}
-	return {"warm": true, "version": version, "reason": ""}
+	return {"warm": true, "version": version, "source": source, "reason": ""}
 
 
 ## Warm the environment the freshly-written entry will actually launch.
@@ -1922,9 +1984,40 @@ static func prewarm_attach_launch(
 	var plan := prewarm_attach_plan(launch_context, discovery_override)
 	if not bool(plan.get("warm", false)):
 		return {"skipped": true, "reason": str(plan.get("reason", ""))}
+	var source := str(plan.get("source", ""))
+	if not source.is_empty():
+		return _run_prewarm(
+			prewarm_server_package_argv(str(plan.get("version", "")), source),
+			timeout_ms,
+			cancel_check,
+		)
 	return prewarm_server_package_blocking(
 		str(plan.get("version", "")), timeout_ms, cancel_check
 	)
+
+
+## Shared spawn behind both prewarm paths. Kept after `prewarm_attach_plan`:
+## the self-update smoke harness swaps `prewarm_server_package_blocking` for a
+## frozen stub and checks that its span never reaches uvx.
+static func _run_prewarm(args: Array[String], timeout_ms: int, cancel_check: Callable) -> Dictionary:
+	if args.is_empty():
+		return {"skipped": true, "reason": "no version pin"}
+	var uvx := find_uvx()
+	if uvx.is_empty():
+		## dev-venv and system tiers have no per-version cache to warm.
+		return {"skipped": true, "reason": "no uvx"}
+	var command: Array[String] = [uvx]
+	command.append_array(args)
+	var result := McpCliExec.run(
+		uvx,
+		args,
+		timeout_ms,
+		true,
+		cancel_check,
+		UvResolution.is_production_command(command),
+	)
+	result["skipped"] = false
+	return result
 
 
 static func _uvx_cli_names() -> Array[String]:
@@ -2041,6 +2134,7 @@ static func _attach_launch_cache_key(launch_context: Dictionary) -> String:
 		launch_context.get("allow_dev_venv", null),
 		launch_context.get("platform", null),
 		launch_context.get("telemetry_enabled", null),
+		launch_context.get("server_source", null),
 	])
 
 

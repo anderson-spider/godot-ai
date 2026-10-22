@@ -4,6 +4,7 @@ extends McpTestSuite
 const ClientHandler := preload("res://addons/godot_ai/handlers/client_handler.gd")
 const ClientBaseScript := preload("res://addons/godot_ai/clients/_base.gd")
 const ClientMutationLock := preload("res://addons/godot_ai/utils/client_mutation_lock.gd")
+const UvResolution := preload("res://addons/godot_ai/utils/uv_resolution_policy.gd")
 
 ## Tests for the client configuration registry + strategies.
 ##
@@ -720,6 +721,80 @@ func test_uvx_server_command_uses_exact_pin_not_tilde() -> void:
 				has_exact_pin = true
 				break
 		assert_true(has_exact_pin, "uvx tier command should contain godot-ai==<plugin_version>; got %s" % str(cmd))
+
+
+# ----- project-pinned server source -----
+
+const _TEST_SERVER_SOURCE := "git+https://example.invalid/godot-ai@some-branch"
+
+
+func _source_launch_context(source: String) -> Dictionary:
+	var context := McpClientConfigurator.capture_launch_context()
+	context["allow_dev_venv"] = false
+	context["server_source"] = source
+	context["platform"] = "macOS"
+	return context
+
+
+func test_attach_launch_installs_the_server_from_a_pinned_source() -> void:
+	var attach := McpClientConfigurator.resolve_attach_launch(
+		_source_launch_context(_TEST_SERVER_SOURCE), {"uvx_path": "/tmp/godot-ai-test/uvx"}
+	)
+	assert_true(bool(attach.get("ok", false)), str(attach))
+	var args: Array = attach.args
+	assert_eq(str(args[args.find("--from") + 1]), _TEST_SERVER_SOURCE)
+	## uv builds a git source, so only --no-build goes; the index policy stays.
+	assert_false(args.has("--no-build"), "a git source needs a build: %s" % str(args))
+	assert_true(args.has("--no-config"))
+	var command: Array = [attach.command]
+	command.append_array(args)
+	assert_true(UvResolution.is_production_command(command), str(command))
+	for arg in args:
+		assert_false(str(arg).begins_with("godot-ai=="), "pinned source must replace the PyPI pin")
+
+
+func test_attach_launch_without_a_source_keeps_the_pypi_pin() -> void:
+	var attach := McpClientConfigurator.resolve_attach_launch(
+		_source_launch_context(""), {"uvx_path": "/tmp/godot-ai-test/uvx"}
+	)
+	assert_true(bool(attach.get("ok", false)), str(attach))
+	var args: Array = attach.args
+	assert_true(args.has("--no-build"))
+	assert_eq(
+		str(args[args.find("--from") + 1]),
+		"godot-ai==%s" % McpClientConfigurator._pypi_pin_version(McpClientConfigurator.get_plugin_version())
+	)
+
+
+func test_prewarm_builds_the_pinned_source() -> void:
+	var args := McpClientConfigurator.prewarm_server_package_argv("4.3.0", _TEST_SERVER_SOURCE)
+	assert_eq(str(args[args.find("--from") + 1]), _TEST_SERVER_SOURCE)
+	assert_false(args.has("--no-build"))
+	assert_eq(str(args[-1]), "--version")
+
+
+func test_server_source_with_whitespace_is_ignored() -> void:
+	assert_eq(McpClientConfigurator.normalize_server_source("  %s  " % _TEST_SERVER_SOURCE), _TEST_SERVER_SOURCE)
+	assert_eq(McpClientConfigurator.normalize_server_source("git+https://x/y z"), "")
+	assert_eq(McpClientConfigurator.normalize_server_source(""), "")
+
+
+func test_project_server_source_skips_the_dev_venv() -> void:
+	var key := McpClientConfigurator.SERVER_SOURCE_SETTING
+	var had := ProjectSettings.has_setting(key)
+	var previous: Variant = ProjectSettings.get_setting(key) if had else null
+	ProjectSettings.set_setting(key, _TEST_SERVER_SOURCE)
+	var source := McpClientConfigurator.server_source()
+	var context := McpClientConfigurator.capture_launch_context()
+	var mode := McpClientConfigurator.get_server_launch_mode()
+	ProjectSettings.set_setting(key, previous)
+	McpClientConfigurator.server_source()
+	McpClientConfigurator.capture_launch_context()
+	assert_eq(source, _TEST_SERVER_SOURCE)
+	assert_eq(str(context.get("server_source", "")), _TEST_SERVER_SOURCE)
+	assert_false(bool(context.get("allow_dev_venv", true)))
+	assert_ne(mode, "dev_venv")
+	assert_eq(ProjectSettings.has_setting(key), had)
 
 
 # ----- mode override + symlink safety -----

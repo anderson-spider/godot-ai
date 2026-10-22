@@ -240,6 +240,17 @@ The immutable plan uses one three-tier command order:
    official PyPI explicit for an exact user version;
 3. a matching `godot-ai` executable as the system fallback.
 
+A project can pin where uvx gets the server: set the project setting
+`godot_ai/server_source` (or `GODOT_AI_SERVER_SOURCE` for CLI launches) to any
+uv requirement source, such as
+`git+https://github.com/<owner>/godot-ai@<branch>`. The pinned source replaces
+`godot-ai==VERSION` in both the managed server and the client attach command,
+skips tier 1, and drops only `--no-build`, since uv has to build a git source.
+This keeps a game on a pushed branch while the checkout it came from keeps
+changing. Pair it with a copied `addons/godot_ai`, not a symlink, so the plugin
+and the server come from the same commit; a pinned project also skips the
+upstream release check, so the dock never offers to replace that copy.
+
 `PYTHONPATH`, ports, exclusions, allow-host ranges, telemetry preference,
 keep-alive policy, PID-file path, and command argv are captured on the main
 thread. Worker effects consume those copied values and do not read mutable

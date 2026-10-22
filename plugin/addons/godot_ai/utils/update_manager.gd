@@ -83,6 +83,15 @@ var _qualification: Dictionary = {}
 var _download_root := ""
 
 
+## Dev checkouts update through git. A project that pins its server source
+## pins its plugin build too, and an upstream release would replace that tree
+## with a different one.
+static func release_check_applies() -> bool:
+	if ClientConfigurator.is_dev_checkout():
+		return false
+	return ClientConfigurator.server_source().is_empty()
+
+
 func check_for_updates() -> void:
 	_release.clear()
 	_qualification = _qualification_from_environment()
@@ -90,7 +99,7 @@ func check_for_updates() -> void:
 		_qualification.clear()
 		push_error("MCP | invalid private qualification release capability")
 		return
-	if ClientConfigurator.is_dev_checkout():
+	if not release_check_applies():
 		return
 	if _check_request != null:
 		_check_request.queue_free()

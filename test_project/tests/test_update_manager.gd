@@ -84,6 +84,36 @@ static func _record_states(manager: Manager) -> Array[Dictionary]:
 	return states
 
 
+func test_a_pinned_server_source_skips_the_release_check() -> void:
+	var es := EditorInterface.get_editor_settings()
+	var setting: Variant = (
+		es.get_setting(McpClientConfigurator.MODE_OVERRIDE_SETTING)
+		if es != null and es.has_setting(McpClientConfigurator.MODE_OVERRIDE_SETTING)
+		else ""
+	)
+	if not str(setting).strip_edges().is_empty():
+		skip("godot_ai/mode_override is set in this editor; the user-mode path is not reachable")
+		return
+	var key := McpClientConfigurator.SERVER_SOURCE_SETTING
+	var had := ProjectSettings.has_setting(key)
+	var previous: Variant = ProjectSettings.get_setting(key) if had else null
+	var previous_mode := OS.get_environment(McpClientConfigurator.MODE_OVERRIDE_ENV)
+	## User mode, so this checkout's .venv does not decide the answer.
+	OS.set_environment(McpClientConfigurator.MODE_OVERRIDE_ENV, "user")
+	ProjectSettings.set_setting(key, null)
+	var unpinned := Manager.release_check_applies()
+	ProjectSettings.set_setting(key, "git+https://example.invalid/godot-ai@some-branch")
+	var pinned := Manager.release_check_applies()
+	ProjectSettings.set_setting(key, previous)
+	if previous_mode.is_empty():
+		OS.unset_environment(McpClientConfigurator.MODE_OVERRIDE_ENV)
+	else:
+		OS.set_environment(McpClientConfigurator.MODE_OVERRIDE_ENV, previous_mode)
+	McpClientConfigurator.server_source()
+	assert_true(unpinned, "a user install without a pinned source checks releases")
+	assert_false(pinned, "a pinned build must not look for upstream releases")
+
+
 ## The plugin takes the update lock before the download and releases it, and
 ## resumes any quiesced client work, only when an install state says the
 ## install is over. A failure that stays silent about that leaves lock.json

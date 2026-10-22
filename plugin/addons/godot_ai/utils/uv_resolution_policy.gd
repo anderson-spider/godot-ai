@@ -48,9 +48,14 @@ static func qualification_authorized() -> bool:
 	return PathTemplate.env_lookup(QUALIFICATION_INDEX_ENV) == "1"
 
 
-static func args() -> Array[String]:
+## `allow_build` is for a project-pinned git source (see
+## `ClientConfigurator.SERVER_SOURCE_SETTING`): uv has to build that wheel, so
+## only `--no-build` is dropped and the index policy stays the same.
+static func args(allow_build: bool = false) -> Array[String]:
 	var result: Array[String] = []
 	result.assign(_BASE_ARGS)
+	if allow_build:
+		result.erase("--no-build")
 	if not qualification_authorized():
 		result.append_array([
 			"--index", PUBLIC_INDEX,
