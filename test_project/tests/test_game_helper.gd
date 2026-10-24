@@ -251,6 +251,103 @@ func test_input_mouse_position_partial_dict_uses_number() -> void:
 	assert_eq(r.position.x, 7.0)
 
 
+# ----- input_mouse drag: held buttons ride on motion -----
+
+func _reset_mouse_state() -> void:
+	_helper.set("_mouse_button_mask", 0)
+	_helper.set("_last_mouse_position", null)
+
+
+func test_input_mouse_motion_carries_held_button_mask() -> void:
+	## GUI drag-and-drop reads the button mask from the motion event, so a
+	## press followed by motion must look like a physical drag.
+	_reset_mouse_state()
+	var press: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "position": {"x": 10, "y": 20}, "button": "left", "pressed": true})
+	assert_eq(press.input.button_mask, MOUSE_BUTTON_MASK_LEFT, "the press itself carries its button")
+	assert_eq(press.reply.buttons, ["left"])
+	var drag: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": {"x": 40, "y": 25}})
+	var motion: InputEventMouseMotion = drag.input
+	assert_eq(motion.button_mask, MOUSE_BUTTON_MASK_LEFT, "motion while held must carry the left mask")
+	assert_eq(motion.relative, Vector2(30, 5), "relative is measured from the previous mouse event")
+	assert_eq(drag.reply.buttons, ["left"])
+	var release: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "position": {"x": 40, "y": 25}, "button": "left", "pressed": false})
+	assert_eq(release.input.button_mask, 0)
+	var hover: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": {"x": 41, "y": 25}})
+	assert_eq(hover.input.button_mask, 0, "motion after release is a plain hover")
+	_reset_mouse_state()
+
+
+func test_input_mouse_first_motion_has_zero_relative() -> void:
+	_reset_mouse_state()
+	var first: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [5, 6]})
+	assert_eq(first.input.relative, Vector2.ZERO)
+	assert_eq(first.input.button_mask, 0)
+	_reset_mouse_state()
+
+
+func test_input_mouse_buttons_param_overrides_mask() -> void:
+	## An explicit buttons list replaces the tracked state for one motion, for
+	## drags whose press was not sent through input_mouse.
+	_reset_mouse_state()
+	var drag: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [1, 1], "buttons": ["left", "right"]})
+	assert_eq(drag.input.button_mask, MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_RIGHT)
+	assert_eq(drag.reply.buttons, ["left", "right"])
+	assert_eq(_helper.get("_mouse_button_mask"), 0, "an override does not change the held state")
+	var empty: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [2, 1], "buttons": []})
+	assert_eq(empty.input.button_mask, 0)
+	_reset_mouse_state()
+
+
+func test_input_mouse_buttons_param_rejects_unknown_names() -> void:
+	_reset_mouse_state()
+	var bad: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [1, 1], "buttons": ["thumb"]})
+	assert_false(bad.has("input"), "no event is sent for an invalid buttons list")
+	assert_false(bad.reply.sent)
+	assert_contains(bad.reply.error, "thumb")
+	var wrong_type: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [1, 1], "buttons": "left"})
+	assert_false(wrong_type.has("input"))
+	assert_contains(wrong_type.reply.error, "list")
+	_reset_mouse_state()
+
+
+func test_input_mouse_wheel_step_is_not_held() -> void:
+	## A wheel step is an impulse: callers send it once with pressed=true, so
+	## it must not leave later motion looking like a drag.
+	_reset_mouse_state()
+	var wheel: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "position": [3, 3], "button": "wheel_up", "pressed": true})
+	assert_eq(wheel.input.button_index, MOUSE_BUTTON_WHEEL_UP)
+	assert_eq(wheel.input.button_mask, 1 << (MOUSE_BUTTON_WHEEL_UP - 1), "the step itself carries its bit")
+	assert_eq(wheel.reply.buttons, [])
+	assert_eq(_helper.get("_mouse_button_mask"), 0, "a wheel step does not join the held set")
+	var hover: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [4, 3]})
+	assert_eq(hover.input.button_mask, 0, "motion after a wheel step is a plain hover")
+	var bad: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [5, 3], "buttons": ["wheel_down"]})
+	assert_false(bad.has("input"), "a wheel cannot be held through buttons")
+	assert_contains(bad.reply.error, "wheel_down")
+	_reset_mouse_state()
+
+
+func test_input_mouse_unknown_button_tracks_the_sent_left() -> void:
+	## An unknown name falls back to left, so the held set must follow the
+	## left event that is actually sent.
+	_reset_mouse_state()
+	var press: Dictionary = _helper.call("_build_mouse_event", {"event": "button", "position": [1, 1], "button": "thumb", "pressed": true})
+	assert_eq(press.input.button_index, MOUSE_BUTTON_LEFT)
+	assert_eq(press.reply.buttons, ["left"])
+	var drag: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [2, 1]})
+	assert_eq(drag.input.button_mask, MOUSE_BUTTON_MASK_LEFT)
+	_helper.call("_build_mouse_event", {"event": "button", "position": [2, 1], "button": "thumb", "pressed": false})
+	var hover: Dictionary = _helper.call("_build_mouse_event", {"event": "motion", "position": [3, 1]})
+	assert_eq(hover.input.button_mask, 0, "the fallback release clears the left it pressed")
+	_reset_mouse_state()
+
+
+func test_input_mouse_invalid_event_sends_nothing() -> void:
+	var bad: Dictionary = _helper.call("_build_mouse_event", {"event": "scroll"})
+	assert_false(bad.has("input"))
+	assert_false(bad.reply.sent)
+
+
 # ----- #777: stalled-main-loop synchronous screenshot fallback -----
 
 func test_should_capture_stale_sync_requires_stall_plus_real_frame() -> void:
